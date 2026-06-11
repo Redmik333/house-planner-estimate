@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import shiboken6
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 
@@ -17,6 +18,7 @@ binaries = []
 # the binary but miss the Python package files, so add them explicitly.
 datas += collect_data_files("shiboken6", includes=["*.py", "*.pyi", "py.typed"])
 binaries += collect_dynamic_libs("shiboken6")
+datas.append((str(Path(shiboken6.__file__)), "shiboken6"))
 
 if (root / "prices.json").exists():
     datas.append((str(root / "prices.json"), "."))
