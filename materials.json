@@ -274,6 +274,13 @@
       "complexity_factor": 0.85
     }
   },
+  "flooring": {
+    "slab_price_per_m2": 3800
+  },
+  "stairs": {
+    "base_price_per_m2": 18000,
+    "step_price": 2500
+  },
   "insulation_types": {
     "Без утепления": {
       "price_per_m2": 0,

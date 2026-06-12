@@ -81,26 +81,34 @@ def calculate_estimate(project: Project, materials: dict[str, Any]) -> dict[str,
     wall_area = project.wall_area_m2()
     footprint_area = project.footprint_area_m2()
     house_area = project.approximate_house_area_m2()
+    floor_1_area = project.floor_area_m2(1)
+    floor_2_area = project.floor_area_m2(2) if project.floor_mode == "2 этажа" else 0.0
 
     walls_cost = 0.0
+    second_floor_walls_cost = 0.0
     weighted_thickness = 0.0
-    for wall in project.walls:
-        info = wall_material_info(materials, wall.material)
-        default_thickness = float(info.get("thickness_m", wall.thickness) or wall.thickness or 0.3)
-        price_per_m3 = float(info.get("price_per_m3", 0) or 0)
-        price_per_m2 = float(info.get("price_per_m2", 0) or 0)
-        has_manual_rate = wall.price_per_m2 > 0 and abs(wall.price_per_m2 - price_per_m2) > 1
-        if has_manual_rate:
-            rate = wall.price_per_m2
-        elif price_per_m3 > 0:
-            rate = price_per_m3 * wall.thickness
-        elif default_thickness > 0 and wall.thickness > 0:
-            rate = price_per_m2 * (wall.thickness / default_thickness)
-        else:
-            rate = price_per_m2
-        wall_area_item = wall.area_m2() * project.wall_storey_multiplier()
-        walls_cost += wall_area_item * rate
-        weighted_thickness += wall.length_m * wall.thickness
+    for floor in project.visible_floors():
+        for wall in floor.walls:
+            info = wall_material_info(materials, wall.material)
+            default_thickness = float(info.get("thickness_m", wall.thickness) or wall.thickness or 0.3)
+            price_per_m3 = float(info.get("price_per_m3", 0) or 0)
+            price_per_m2 = float(info.get("price_per_m2", 0) or 0)
+            has_manual_rate = wall.price_per_m2 > 0 and abs(wall.price_per_m2 - price_per_m2) > 1
+            if has_manual_rate:
+                rate = wall.price_per_m2
+            elif price_per_m3 > 0:
+                rate = price_per_m3 * wall.thickness
+            elif default_thickness > 0 and wall.thickness > 0:
+                rate = price_per_m2 * (wall.thickness / default_thickness)
+            else:
+                rate = price_per_m2
+            area_multiplier = 1.35 if project.floor_mode == "1 этаж + мансарда" and floor.level == 1 else 1.0
+            wall_area_item = wall.area_m2() * area_multiplier
+            item_cost = wall_area_item * rate
+            walls_cost += item_cost
+            if floor.level == 2:
+                second_floor_walls_cost += item_cost
+            weighted_thickness += wall.length_m * wall.thickness
 
     avg_thickness = weighted_thickness / length if length > 0 else 0.0
 
@@ -119,8 +127,8 @@ def calculate_estimate(project: Project, materials: dict[str, Any]) -> dict[str,
     roof_type_factor = float(roof_type.get("complexity_factor", 1) or 1)
     roof_cost = roof_area * roofing_rate * waste_factor * install_factor * roof_type_factor * project.roof_complexity
 
-    windows_cost = sum(_window_price(window, materials) * max(1, window.count) for window in project.windows)
-    doors_cost = sum(_door_price(door, materials) for door in project.doors)
+    windows_cost = sum(_window_price(window, materials) * max(1, window.count) for window in project.all_windows())
+    doors_cost = sum(_door_price(door, materials) for door in project.all_doors())
     openings_cost = windows_cost + doors_cost
 
     insulation = section_item(materials, "insulation_types", project.insulation_type)
@@ -130,13 +138,21 @@ def calculate_estimate(project: Project, materials: dict[str, Any]) -> dict[str,
     facade_cost = wall_area * float(facade.get("price_per_m2", 0) or 0) * float(facade.get("complexity_factor", 1) or 1)
     finishing_cost = facade_cost
 
+    stairs_cost = sum(_stair_price(stair, materials) for stair in project.all_stairs())
+    slab_rate = float(materials.get("flooring", {}).get("slab_price_per_m2", 3800) or 3800)
+    slab_cost = floor_1_area * slab_rate if project.floor_mode == "2 этажа" else 0.0
+    second_floor_cost = second_floor_walls_cost + slab_cost
+
     floor_factor = _floor_complexity_factor(project)
-    subtotal = walls_cost + foundation_cost + roof_cost + openings_cost + insulation_cost + facade_cost
+    subtotal = walls_cost + foundation_cost + roof_cost + openings_cost + insulation_cost + facade_cost + stairs_cost + slab_cost
     complexity_extra = subtotal * (floor_factor - 1)
     total = subtotal + complexity_extra
 
     return {
         "house_area": house_area,
+        "floor_1_area": floor_1_area,
+        "floor_2_area": floor_2_area,
+        "total_area": house_area,
         "footprint_area": footprint_area,
         "wall_length": length,
         "wall_area": wall_area,
@@ -159,6 +175,9 @@ def calculate_estimate(project: Project, materials: dict[str, Any]) -> dict[str,
         "windows_cost": windows_cost,
         "doors_cost": doors_cost,
         "openings_cost": openings_cost,
+        "stairs_cost": stairs_cost,
+        "slab_cost": slab_cost,
+        "second_floor_cost": second_floor_cost,
         "insulation_cost": insulation_cost,
         "facade_cost": facade_cost,
         "finishing_cost": finishing_cost,
@@ -229,10 +248,13 @@ def estimate_to_text(project: Project, estimate: dict[str, float]) -> str:
             f"Коэффициент сложности: {project.roof_complexity:.2f}",
             f"Утепление: {project.insulation_type}",
             f"Фасад: {project.facade_finish}",
-            f"Стен: {len(project.walls)}",
-            f"Дверей: {len(project.doors)}",
-            f"Окон в смете: {sum(max(1, window.count) for window in project.windows)}",
+            f"Стен: {len(project.all_walls())}",
+            f"Дверей: {len(project.all_doors())}",
+            f"Окон в смете: {sum(max(1, window.count) for window in project.all_windows())}",
+            f"Лестниц: {len(project.all_stairs())}",
             "",
+            f"Площадь 1 этажа: {estimate['floor_1_area']:.1f} м²",
+            f"Площадь 2 этажа: {estimate['floor_2_area']:.1f} м²",
             f"Площадь дома: {estimate['house_area']:.1f} м²",
             f"Площадь застройки: {estimate['footprint_area']:.1f} м²",
             f"Общая длина стен: {estimate['wall_length']:.1f} м",
@@ -246,6 +268,9 @@ def estimate_to_text(project: Project, estimate: dict[str, float]) -> str:
             f"Стоимость крыши: {format_money(estimate['roof_cost'])}",
             f"Стоимость окон: {format_money(estimate['windows_cost'])}",
             f"Стоимость дверей: {format_money(estimate['doors_cost'])}",
+            f"Стоимость лестницы: {format_money(estimate['stairs_cost'])}",
+            f"Стоимость перекрытия: {format_money(estimate['slab_cost'])}",
+            f"Стоимость второго этажа: {format_money(estimate['second_floor_cost'])}",
             f"Стоимость утепления: {format_money(estimate['insulation_cost'])}",
             f"Стоимость фасада: {format_money(estimate['facade_cost'])}",
             f"Поправка этажности: {format_money(estimate['complexity_extra'])}",
@@ -273,6 +298,18 @@ def _door_price(door, materials: dict[str, Any]) -> float:
         return door.price
     template = section_item(materials, "door_templates", door.template_name)
     return float(template.get("price", 0) or 0)
+
+
+def _stair_price(stair, materials: dict[str, Any]) -> float:
+    if stair.price > 0:
+        return stair.price
+    stair_prices = materials.get("stairs", {})
+    base_rate = float(stair_prices.get("base_price_per_m2", 18000) or 18000)
+    step_rate = float(stair_prices.get("step_price", 2500) or 2500)
+    base = max(0.5, stair.width) * max(1.0, stair.length) * base_rate
+    steps = max(1, stair.steps) * step_rate
+    factor = {"Прямая": 1.0, "Г-образная": 1.18, "П-образная": 1.35}.get(stair.stair_type, 1.0)
+    return (base + steps) * factor
 
 
 def _floor_complexity_factor(project: Project) -> float:
@@ -359,6 +396,8 @@ def _fallback_materials() -> dict[str, Any]:
             "Лента": {"price_per_m2": 6200, "complexity_factor": 1.0},
             "Сваи": {"price_per_m2": 3800, "complexity_factor": 0.85},
         },
+        "flooring": {"slab_price_per_m2": 3800},
+        "stairs": {"base_price_per_m2": 18000, "step_price": 2500},
         "insulation_types": {"Без утепления": {"price_per_m2": 0, "thermal_conductivity": 0, "thickness_m": 0}},
         "facade_finish": {
             "Без отделки": {"price_per_m2": 0, "complexity_factor": 1.0},

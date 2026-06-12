@@ -43,8 +43,9 @@ class SectionView(QWidget):
         self._draw_foundation(painter, left, right, ground_y, scale)
         self._draw_plinth(painter, left, right, ground_y, plinth_top)
         self._draw_walls_and_floors(painter, left, right, plinth_top, wall_top, scale)
+        self._draw_stairs(painter, left, right, plinth_top, scale)
         self._draw_roof(painter, left, right, wall_top, ridge_y, center_x)
-        self._draw_dimensions(painter, right, ground_y, plinth_top, wall_top, ridge_y)
+        self._draw_dimensions(painter, right, ground_y, plinth_top, wall_top, ridge_y, scale)
 
         painter.setPen(QColor("#24343a"))
         painter.setFont(QFont("Arial", 12, QFont.Bold))
@@ -114,14 +115,55 @@ class SectionView(QWidget):
             painter.drawLine(QPointF(roof_left, wall_top), QPointF(left, wall_top))
             painter.drawLine(QPointF(roof_right, wall_top), QPointF(right, wall_top))
 
-    def _draw_dimensions(self, painter: QPainter, right: float, ground_y: float, plinth_top: float, wall_top: float, ridge_y: float) -> None:
+    def _draw_stairs(self, painter: QPainter, left: float, right: float, plinth_top: float, scale: float) -> None:
+        if not self.project.all_stairs() or self.project.floor_mode != "2 этажа":
+            return
+        stair = self.project.all_stairs()[0]
+        stair_left = left + (right - left) * 0.18
+        stair_right = stair_left + max(1.8, stair.length) * scale * 0.52
+        stair_bottom = plinth_top - 0.12 * scale
+        stair_top = plinth_top - (self.project.floor_1_height + self.project.slab_height) * scale
+        painter.setPen(QPen(QColor("#8b5a2b"), 2))
+        painter.setBrush(QColor(225, 185, 126, 95))
+        painter.drawPolygon(
+            QPolygonF(
+                [
+                    QPointF(stair_left, stair_bottom),
+                    QPointF(stair_right, stair_top),
+                    QPointF(stair_right, stair_top + 12),
+                    QPointF(stair_left, stair_bottom + 12),
+                ]
+            )
+        )
+        steps = max(4, min(22, stair.steps))
+        for index in range(steps + 1):
+            t = index / steps
+            x = stair_left + (stair_right - stair_left) * t
+            y = stair_bottom + (stair_top - stair_bottom) * t
+            painter.drawLine(QPointF(x, y), QPointF(x + 18, y))
+        painter.setPen(QColor("#4f3320"))
+        painter.setFont(QFont("Arial", 9, QFont.Bold))
+        painter.drawText(QPointF(stair_left, stair_top - 10), f"лестница: {stair.stair_type}")
+
+    def _draw_dimensions(self, painter: QPainter, right: float, ground_y: float, plinth_top: float, wall_top: float, ridge_y: float, scale: float) -> None:
         x = right + 34
         painter.setPen(QPen(QColor("#4d6258"), 1))
         painter.drawLine(QPointF(x, ground_y), QPointF(x, ridge_y))
-        for y in (ground_y, plinth_top, wall_top, ridge_y):
+        first_top = plinth_top - self.project.floor_1_height * scale
+        slab_top = first_top - self.project.slab_height * scale
+        ticks = [ground_y, plinth_top, first_top, wall_top, ridge_y]
+        if self.project.floor_mode == "2 этажа":
+            ticks.insert(3, slab_top)
+        for y in ticks:
             painter.drawLine(QPointF(x - 6, y), QPointF(x + 6, y))
         painter.setFont(QFont("Arial", 9))
         painter.drawText(QPointF(x + 10, (ground_y + plinth_top) / 2), f"цоколь {self.project.plinth_height:.1f} м")
-        painter.drawText(QPointF(x + 10, (plinth_top + wall_top) / 2), f"стены {self.project.total_wall_height_m():.1f} м")
+        painter.drawText(QPointF(x + 10, (plinth_top + first_top) / 2), f"1 этаж {self.project.floor_1_height:.1f} м")
+        if self.project.floor_mode == "2 этажа":
+            painter.drawText(QPointF(x + 10, (first_top + slab_top) / 2), f"перекрытие {self.project.slab_height:.1f} м")
+            painter.drawText(QPointF(x + 10, (slab_top + wall_top) / 2), f"2 этаж {self.project.floor_2_height:.1f} м")
         if self.project.roof_type != "Плоская":
             painter.drawText(QPointF(x + 10, (wall_top + ridge_y) / 2), f"конёк {self.project.roof_ridge_height:.1f} м")
+        total_height = self.project.plinth_height + self.project.total_wall_height_m() + max(0.0, self.project.roof_ridge_height)
+        painter.setFont(QFont("Arial", 9, QFont.Bold))
+        painter.drawText(QPointF(x + 10, ridge_y - 8), f"общая {total_height:.1f} м")

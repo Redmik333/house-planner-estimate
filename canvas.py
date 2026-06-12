@@ -6,16 +6,18 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import QWidget
 
-from models import DoorItem, PIXELS_PER_METER, Point, Project, Wall, WindowItem
+from models import DoorItem, PIXELS_PER_METER, Point, Project, RoomItem, StairItem, Wall, WindowItem
 
 
 class PlanCanvas(QWidget):
     project_changed = Signal()
     selection_changed = Signal(str, int)
+    room_place_requested = Signal(float, float, int)
 
-    def __init__(self, project: Project) -> None:
+    def __init__(self, project: Project, floor_level: int = 1) -> None:
         super().__init__()
         self.project = project
+        self.floor_level = floor_level
         self.tool = "select"
         self.grid_size = 20
         self.selected_kind = "project"
@@ -24,6 +26,14 @@ class PlanCanvas(QWidget):
         self.hover_ratio = 0.5
         self.door_template: dict[str, object] = {}
         self.window_template: dict[str, object] = {}
+        self.stair_template: dict[str, object] = {
+            "stair_type": "Прямая",
+            "width": 0.9,
+            "length": 3.0,
+            "rise_height": 3.1,
+            "steps": 16,
+            "price": 120000.0,
+        }
         self._draft_start: QPointF | None = None
         self._draft_end: QPointF | None = None
         self._last_mouse_pos: QPointF | None = None
@@ -31,8 +41,17 @@ class PlanCanvas(QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
 
+    def current_floor(self):
+        return self.project.get_floor(self.floor_level)
+
+    def set_floor_level(self, level: int) -> None:
+        self.floor_level = level
+        self._select("project", -1)
+        self.update()
+
     def set_project(self, project: Project) -> None:
         self.project = project
+        self.project.ensure_floor_count(max(1, self.floor_level))
         self._select("project", -1)
         self.update()
         self.project_changed.emit()
@@ -53,14 +72,26 @@ class PlanCanvas(QWidget):
     def set_window_template(self, template: dict[str, object]) -> None:
         self.window_template = dict(template)
 
+    def set_stair_template(self, template: dict[str, object]) -> None:
+        self.stair_template = dict(template)
+
     def delete_selected_element(self) -> None:
+        floor = self.current_floor()
         if self.selected_kind == "wall" and self.selected_index >= 0:
             self._delete_wall(self.selected_index)
         elif self.selected_kind == "door" and self.selected_index >= 0:
-            del self.project.doors[self.selected_index]
+            del floor.doors[self.selected_index]
+            self.project._sync_legacy_lists()
             self._select("project", -1)
         elif self.selected_kind == "window" and self.selected_index >= 0:
-            del self.project.windows[self.selected_index]
+            del floor.windows[self.selected_index]
+            self.project._sync_legacy_lists()
+            self._select("project", -1)
+        elif self.selected_kind == "room" and self.selected_index >= 0:
+            del floor.rooms[self.selected_index]
+            self._select("project", -1)
+        elif self.selected_kind == "stair" and self.selected_index >= 0:
+            del floor.stairs[self.selected_index]
             self._select("project", -1)
         else:
             return
@@ -75,7 +106,7 @@ class PlanCanvas(QWidget):
     def resize_selected_wall(self, length_m: float) -> None:
         if self.selected_kind != "wall" or self.selected_index < 0 or length_m <= 0:
             return
-        wall = self.project.walls[self.selected_index]
+        wall = self.current_floor().walls[self.selected_index]
         dx = wall.end.x - wall.start.x
         dy = wall.end.y - wall.start.y
         current = hypot(dx, dy)
@@ -93,7 +124,9 @@ class PlanCanvas(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor("#fbfbf8"))
         self._draw_grid(painter)
+        self._draw_rooms(painter)
         self._draw_walls(painter)
+        self._draw_stairs(painter)
         self._draw_windows(painter)
         self._draw_doors(painter)
         self._draw_roof_overlay(painter)
@@ -103,6 +136,7 @@ class PlanCanvas(QWidget):
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt API
         pos = self._snap(event.position())
+        floor = self.current_floor()
         if event.button() != Qt.LeftButton:
             return
         self.setFocus()
@@ -113,17 +147,26 @@ class PlanCanvas(QWidget):
         elif self.tool == "door":
             index, ratio = self._wall_at(pos)
             if index >= 0:
-                self.project.doors.append(self._door_from_template(index, ratio))
-                self._select("door", len(self.project.doors) - 1)
+                floor.doors.append(self._door_from_template(index, ratio))
+                self.project._sync_legacy_lists()
+                self._select("door", len(floor.doors) - 1)
                 self.project_changed.emit()
                 self.update()
         elif self.tool == "window":
             index, ratio = self._wall_at(pos)
             if index >= 0:
-                self.project.windows.append(self._window_from_template(index, ratio))
-                self._select("window", len(self.project.windows) - 1)
+                floor.windows.append(self._window_from_template(index, ratio))
+                self.project._sync_legacy_lists()
+                self._select("window", len(floor.windows) - 1)
                 self.project_changed.emit()
                 self.update()
+        elif self.tool == "stair":
+            floor.stairs.append(self._stair_from_template(pos))
+            self._select("stair", len(floor.stairs) - 1)
+            self.project_changed.emit()
+            self.update()
+        elif self.tool == "room":
+            self.room_place_requested.emit(pos.x(), pos.y(), self.floor_level)
         elif self.tool == "roof":
             self.project.show_roof = True
             self._select("roof", -1)
@@ -151,7 +194,7 @@ class PlanCanvas(QWidget):
             if event.buttons() & Qt.LeftButton:
                 dx = pos.x() - self._last_mouse_pos.x()
                 dy = pos.y() - self._last_mouse_pos.y()
-                self.project.walls[self.selected_index].move(dx, dy)
+                self.current_floor().walls[self.selected_index].move(dx, dy)
                 self._last_mouse_pos = pos
                 self.project_changed.emit()
                 self.update()
@@ -159,14 +202,16 @@ class PlanCanvas(QWidget):
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt API
         if self.tool == "wall" and self._draft_start is not None and self._draft_end is not None:
             if hypot(self._draft_end.x() - self._draft_start.x(), self._draft_end.y() - self._draft_start.y()) >= 20:
+                floor_height = self.project.floor_2_height if self.floor_level == 2 else self.project.floor_1_height
                 wall = Wall(
                     Point(self._draft_start.x(), self._draft_start.y()),
                     Point(self._draft_end.x(), self._draft_end.y()),
-                    height=self.project.wall_height,
+                    height=floor_height,
                     material=self.project.wall_material,
                 )
-                self.project.walls.append(wall)
-                self._select("wall", len(self.project.walls) - 1)
+                self.current_floor().walls.append(wall)
+                self.project._sync_legacy_lists()
+                self._select("wall", len(self.current_floor().walls) - 1)
                 self.project_changed.emit()
             self._draft_start = None
             self._draft_end = None
@@ -183,15 +228,17 @@ class PlanCanvas(QWidget):
         self.selection_changed.emit(kind, index)
 
     def _delete_wall(self, wall_index: int) -> None:
-        del self.project.walls[wall_index]
-        self.project.doors = [door for door in self.project.doors if door.wall_index != wall_index]
-        self.project.windows = [window for window in self.project.windows if window.wall_index != wall_index]
-        for door in self.project.doors:
+        floor = self.current_floor()
+        del floor.walls[wall_index]
+        floor.doors = [door for door in floor.doors if door.wall_index != wall_index]
+        floor.windows = [window for window in floor.windows if window.wall_index != wall_index]
+        for door in floor.doors:
             if door.wall_index > wall_index:
                 door.wall_index -= 1
-        for window in self.project.windows:
+        for window in floor.windows:
             if window.wall_index > wall_index:
                 window.wall_index -= 1
+        self.project._sync_legacy_lists()
         self._select("project", -1)
 
     def _draw_grid(self, painter: QPainter) -> None:
@@ -205,7 +252,7 @@ class PlanCanvas(QWidget):
             painter.drawLine(0, y, self.width(), y)
 
     def _draw_walls(self, painter: QPainter) -> None:
-        for index, wall in enumerate(self.project.walls):
+        for index, wall in enumerate(self.current_floor().walls):
             color = QColor("#1f2427")
             if self.selected_kind == "wall" and index == self.selected_index:
                 color = QColor("#197a68")
@@ -224,18 +271,63 @@ class PlanCanvas(QWidget):
             painter.drawText(mid + QPointF(8, -8), f"{wall.length_m:.1f} м")
 
     def _draw_doors(self, painter: QPainter) -> None:
-        for index, door in enumerate(self.project.doors):
-            if door.wall_index >= len(self.project.walls):
+        floor = self.current_floor()
+        for index, door in enumerate(floor.doors):
+            if door.wall_index >= len(floor.walls):
                 continue
             selected = self.selected_kind == "door" and index == self.selected_index
-            self._draw_door_symbol(painter, self.project.walls[door.wall_index], door, selected)
+            self._draw_door_symbol(painter, floor.walls[door.wall_index], door, selected)
 
     def _draw_windows(self, painter: QPainter) -> None:
-        for index, window in enumerate(self.project.windows):
-            if window.wall_index >= len(self.project.walls):
+        floor = self.current_floor()
+        for index, window in enumerate(floor.windows):
+            if window.wall_index >= len(floor.walls):
                 continue
             selected = self.selected_kind == "window" and index == self.selected_index
-            self._draw_window_symbol(painter, self.project.walls[window.wall_index], window, selected)
+            self._draw_window_symbol(painter, floor.walls[window.wall_index], window, selected)
+
+    def _draw_rooms(self, painter: QPainter) -> None:
+        for index, room in enumerate(self.current_floor().rooms):
+            selected = self.selected_kind == "room" and index == self.selected_index
+            text = f"{room.name}\n{room.area:.1f} м²"
+            rect = QRectF(room.center.x - 66, room.center.y - 25, 132, 50)
+            painter.setPen(QPen(QColor("#5d8f77" if selected else "#9fb8aa"), 2 if selected else 1))
+            painter.setBrush(QColor(209, 235, 223, 165 if selected else 105))
+            painter.drawRoundedRect(rect, 10, 10)
+            painter.setPen(QColor("#173b33"))
+            painter.setFont(QFont("Arial", 9, QFont.Bold))
+            painter.drawText(rect, Qt.AlignCenter, text)
+
+    def _draw_stairs(self, painter: QPainter) -> None:
+        for index, stair in enumerate(self.current_floor().stairs):
+            selected = self.selected_kind == "stair" and index == self.selected_index
+            x = stair.position.x
+            y = stair.position.y
+            width = max(28.0, stair.width * PIXELS_PER_METER)
+            length = max(60.0, stair.length * PIXELS_PER_METER)
+            rect = QRectF(x - width / 2, y - length / 2, width, length)
+            painter.setPen(QPen(QColor("#8b5a2b" if not selected else "#c46d20"), 2))
+            painter.setBrush(QColor(225, 185, 126, 135 if not selected else 190))
+
+            if stair.stair_type == "Г-образная":
+                painter.drawRect(QRectF(rect.left(), rect.top(), width, length * 0.62))
+                painter.drawRect(QRectF(rect.left(), rect.center().y(), width * 1.55, width))
+            elif stair.stair_type == "П-образная":
+                painter.drawRect(QRectF(rect.left(), rect.top(), width, length))
+                painter.drawRect(QRectF(rect.left() + width * 1.15, rect.top(), width, length))
+                painter.drawRect(QRectF(rect.left(), rect.center().y() - width / 2, width * 2.15, width))
+            else:
+                painter.drawRect(rect)
+
+            steps = max(3, min(28, stair.steps))
+            painter.setPen(QPen(QColor("#7a4b22"), 1))
+            for step in range(1, steps):
+                yy = rect.top() + rect.height() * step / steps
+                painter.drawLine(QPointF(rect.left(), yy), QPointF(rect.right(), yy))
+            self._draw_arrow(painter, QPointF(rect.center().x(), rect.bottom() - 8), QPointF(rect.center().x(), rect.top() + 8))
+            painter.setPen(QColor("#3a2617"))
+            painter.setFont(QFont("Arial", 8, QFont.Bold))
+            painter.drawText(rect.adjusted(-40, -22, 40, 0), Qt.AlignHCenter | Qt.AlignTop, "Лестница")
 
     def _draw_door_symbol(self, painter: QPainter, wall: Wall, door: DoorItem, selected: bool) -> None:
         center, tangent, normal = self._wall_basis(wall, door.position)
@@ -298,7 +390,7 @@ class PlanCanvas(QWidget):
         painter.drawText(text_rect, Qt.AlignCenter, text)
 
     def _draw_roof_overlay(self, painter: QPainter) -> None:
-        if not self.project.show_roof or not self.project.walls:
+        if not self.project.show_roof or not self.project.get_floor(1).walls:
             return
         base_points = self._roof_base_polygon_points()
         roof_points = self._expanded_polygon_points(base_points, self.project.roof_overhang * PIXELS_PER_METER)
@@ -441,7 +533,7 @@ class PlanCanvas(QWidget):
     def _draw_hover_preview(self, painter: QPainter) -> None:
         if self.tool not in ("door", "window") or self.hover_wall < 0:
             return
-        wall = self.project.walls[self.hover_wall]
+        wall = self.current_floor().walls[self.hover_wall]
         if self.tool == "door":
             preview = self._door_from_template(self.hover_wall, self.hover_ratio)
             self._draw_door_symbol(painter, wall, preview, True)
@@ -450,7 +542,7 @@ class PlanCanvas(QWidget):
             self._draw_window_symbol(painter, wall, preview, True)
 
     def _door_from_template(self, wall_index: int, ratio: float) -> DoorItem:
-        wall = self.project.walls[wall_index]
+        wall = self.current_floor().walls[wall_index]
         return DoorItem(
             wall_index=wall_index,
             position=ratio,
@@ -464,7 +556,7 @@ class PlanCanvas(QWidget):
         )
 
     def _window_from_template(self, wall_index: int, ratio: float) -> WindowItem:
-        wall = self.project.walls[wall_index]
+        wall = self.current_floor().walls[wall_index]
         return WindowItem(
             wall_index=wall_index,
             position=ratio,
@@ -479,6 +571,18 @@ class PlanCanvas(QWidget):
             count=1,
         )
 
+    def _stair_from_template(self, pos: QPointF) -> StairItem:
+        return StairItem(
+            floor=self.floor_level,
+            position=Point(pos.x(), pos.y()),
+            stair_type=str(self.stair_template.get("stair_type", "Прямая")),
+            width=float(self.stair_template.get("width", 0.9) or 0.9),
+            length=float(self.stair_template.get("length", 3.0) or 3.0),
+            rise_height=float(self.stair_template.get("rise_height", 3.1) or 3.1),
+            steps=int(self.stair_template.get("steps", 16) or 16),
+            price=float(self.stair_template.get("price", 120000) or 0),
+        )
+
     def _draw_hint(self, painter: QPainter) -> None:
         painter.setPen(QColor("#5f6f78"))
         painter.setFont(QFont("Arial", 10))
@@ -486,16 +590,17 @@ class PlanCanvas(QWidget):
         painter.drawText(QRectF(12, self.height() - 32, self.width() - 24, 24), Qt.AlignLeft, text)
 
     def _wall_visible_spans(self, wall_index: int) -> list[tuple[float, float]]:
-        wall = self.project.walls[wall_index]
+        floor = self.current_floor()
+        wall = floor.walls[wall_index]
         if wall.length_m <= 0:
             return []
 
         gaps: list[tuple[float, float]] = []
-        for door in self.project.doors:
+        for door in floor.doors:
             if door.wall_index == wall_index:
                 half_ratio = door.width / wall.length_m / 2
                 gaps.append((door.position - half_ratio, door.position + half_ratio))
-        for window in self.project.windows:
+        for window in floor.windows:
             if window.wall_index == wall_index:
                 half_ratio = window.width / wall.length_m / 2
                 gaps.append((window.position - half_ratio, window.position + half_ratio))
@@ -511,14 +616,24 @@ class PlanCanvas(QWidget):
         return spans
 
     def _element_at(self, pos: QPointF) -> tuple[str, int]:
-        for index, door in enumerate(self.project.doors):
-            if door.wall_index < len(self.project.walls):
-                center = self._point_on_wall(self.project.walls[door.wall_index], door.position)
+        floor = self.current_floor()
+        for index, stair in enumerate(floor.stairs):
+            width = max(28.0, stair.width * PIXELS_PER_METER)
+            length = max(60.0, stair.length * PIXELS_PER_METER)
+            rect = QRectF(stair.position.x - width / 2, stair.position.y - length / 2, width, length)
+            if rect.adjusted(-8, -8, 8, 8).contains(pos):
+                return "stair", index
+        for index, room in enumerate(floor.rooms):
+            if self._distance(pos, QPointF(room.center.x, room.center.y)) <= 70:
+                return "room", index
+        for index, door in enumerate(floor.doors):
+            if door.wall_index < len(floor.walls):
+                center = self._point_on_wall(floor.walls[door.wall_index], door.position)
                 if self._distance(pos, center) <= max(16, door.width * PIXELS_PER_METER):
                     return "door", index
-        for index, window in enumerate(self.project.windows):
-            if window.wall_index < len(self.project.walls):
-                center = self._point_on_wall(self.project.walls[window.wall_index], window.position)
+        for index, window in enumerate(floor.windows):
+            if window.wall_index < len(floor.walls):
+                center = self._point_on_wall(floor.walls[window.wall_index], window.position)
                 if self._distance(pos, center) <= max(16, window.width * PIXELS_PER_METER / 2):
                     return "window", index
 
@@ -540,7 +655,7 @@ class PlanCanvas(QWidget):
     def _roof_base_polygon_points(self) -> list[QPointF]:
         points: list[QPointF] = []
         seen: set[tuple[float, float]] = set()
-        for wall in self.project.walls:
+        for wall in self.project.get_floor(1).walls:
             for point in (wall.start, wall.end):
                 key = (round(point.x, 3), round(point.y, 3))
                 if key not in seen:
@@ -571,7 +686,7 @@ class PlanCanvas(QWidget):
         best_index = -1
         best_distance = 14.0
         best_ratio = 0.5
-        for index, wall in enumerate(self.project.walls):
+        for index, wall in enumerate(self.current_floor().walls):
             distance, ratio = self._point_to_segment_distance(pos, wall)
             if distance < best_distance:
                 best_index = index
@@ -630,7 +745,7 @@ class RoofPreviewWidget(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor("#f8faf7"))
 
-        if not self.project.walls:
+        if not self.project.get_floor(1).walls:
             painter.setPen(QColor("#6b7872"))
             painter.drawText(self.rect(), Qt.AlignCenter, "3D-просмотр крыши появится после стен")
             return

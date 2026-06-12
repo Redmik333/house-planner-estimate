@@ -29,7 +29,7 @@ class FacadeView(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor("#f8faf7"))
 
-        if not self.project.walls:
+        if not self.project.get_floor(1).walls:
             painter.setPen(QColor("#5f6f78"))
             painter.setFont(QFont("Arial", 14, QFont.Bold))
             painter.drawText(self.rect(), Qt.AlignCenter, "Фасад появится после рисования стен")
@@ -92,37 +92,41 @@ class FacadeView(QWidget):
             painter.drawText(QPointF(right - 92, slab_top - 6), label)
 
     def _draw_openings(self, painter: QPainter, bounds: tuple[float, float, float, float], left: float, floor_y: float, scale: float) -> None:
-        visible_walls = {index for index, wall in enumerate(self.project.walls) if self._wall_matches_side(wall, bounds)}
-        if not visible_walls:
-            visible_walls = set(range(len(self.project.walls)))
+        for floor in self.project.visible_floors():
+            floor_base_y = floor_y
+            if floor.level == 2:
+                floor_base_y = floor_y - self.project.floor_1_height * scale - self.project.slab_height * scale
+            visible_walls = {index for index, wall in enumerate(floor.walls) if self._wall_matches_side(wall, bounds)}
+            if not visible_walls:
+                visible_walls = set(range(len(floor.walls)))
 
-        for window in self.project.windows:
-            if window.wall_index not in visible_walls or window.wall_index >= len(self.project.walls):
-                continue
-            x = left + self._opening_offset_m(self.project.walls[window.wall_index], window.position, bounds) * scale
-            width = window.width * scale
-            height = window.height * scale
-            bottom = floor_y - window.install_height * scale
-            rect = QRectF(x - width / 2, bottom - height, width, height)
-            painter.setBrush(QColor("#b9ddf3"))
-            painter.setPen(QPen(QColor("#1779b7"), 2))
-            painter.drawRect(rect)
-            painter.drawLine(rect.topLeft(), rect.bottomRight())
-            painter.drawLine(rect.bottomLeft(), rect.topRight())
-            self._draw_size_label(painter, rect, f"{window.width:.1f} x {window.height:.1f} м")
+            for window in floor.windows:
+                if window.wall_index not in visible_walls or window.wall_index >= len(floor.walls):
+                    continue
+                x = left + self._opening_offset_m(floor.walls[window.wall_index], window.position, bounds) * scale
+                width = window.width * scale
+                height = window.height * scale
+                bottom = floor_base_y - window.install_height * scale
+                rect = QRectF(x - width / 2, bottom - height, width, height)
+                painter.setBrush(QColor("#b9ddf3"))
+                painter.setPen(QPen(QColor("#1779b7"), 2))
+                painter.drawRect(rect)
+                painter.drawLine(rect.topLeft(), rect.bottomRight())
+                painter.drawLine(rect.bottomLeft(), rect.topRight())
+                self._draw_size_label(painter, rect, f"{window.width:.1f} x {window.height:.1f} м")
 
-        for door in self.project.doors:
-            if door.wall_index not in visible_walls or door.wall_index >= len(self.project.walls):
-                continue
-            x = left + self._opening_offset_m(self.project.walls[door.wall_index], door.position, bounds) * scale
-            width = door.width * scale
-            height = door.height * scale
-            rect = QRectF(x - width / 2, floor_y - height, width, height)
-            painter.setBrush(QColor("#d79a55"))
-            painter.setPen(QPen(QColor("#9a5a21"), 2))
-            painter.drawRect(rect)
-            painter.drawLine(rect.topLeft(), rect.bottomRight())
-            self._draw_size_label(painter, rect, f"{door.width:.1f} x {door.height:.1f} м")
+            for door in floor.doors:
+                if door.wall_index not in visible_walls or door.wall_index >= len(floor.walls):
+                    continue
+                x = left + self._opening_offset_m(floor.walls[door.wall_index], door.position, bounds) * scale
+                width = door.width * scale
+                height = door.height * scale
+                rect = QRectF(x - width / 2, floor_base_y - height, width, height)
+                painter.setBrush(QColor("#d79a55"))
+                painter.setPen(QPen(QColor("#9a5a21"), 2))
+                painter.drawRect(rect)
+                painter.drawLine(rect.topLeft(), rect.bottomRight())
+                self._draw_size_label(painter, rect, f"{door.width:.1f} x {door.height:.1f} м")
 
     def _draw_size_label(self, painter: QPainter, rect: QRectF, text: str) -> None:
         painter.setPen(QColor("#1f2a2e"))
@@ -177,8 +181,9 @@ class FacadeView(QWidget):
         painter.drawText(QPointF(center_x + 8, ridge_y + 16), f"конёк {self.project.roof_ridge_height:.1f} м")
 
     def _bounds(self) -> tuple[float, float, float, float]:
-        xs = [point.x for wall in self.project.walls for point in (wall.start, wall.end)]
-        ys = [point.y for wall in self.project.walls for point in (wall.start, wall.end)]
+        walls = self.project.get_floor(1).walls
+        xs = [point.x for wall in walls for point in (wall.start, wall.end)]
+        ys = [point.y for wall in walls for point in (wall.start, wall.end)]
         return min(xs), min(ys), max(xs), max(ys)
 
     def _facade_width(self, bounds: tuple[float, float, float, float]) -> float:

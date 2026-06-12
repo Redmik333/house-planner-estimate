@@ -147,11 +147,132 @@ class WindowItem:
         )
 
 
+ROOM_TYPES = [
+    "Кухня",
+    "Гостиная",
+    "Спальня",
+    "Детская",
+    "Кабинет",
+    "Санузел",
+    "Ванная",
+    "Котельная",
+    "Гардероб",
+    "Коридор",
+    "Прихожая",
+    "Кладовая",
+    "Постирочная",
+    "Свободное помещение",
+]
+
+STAIR_TYPES = ["Прямая", "Г-образная", "П-образная"]
+
+
+@dataclass
+class RoomItem:
+    name: str
+    floor: int
+    center: Point
+    area: float
+    perimeter: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "floor": self.floor,
+            "center": self.center.to_dict(),
+            "area": self.area,
+            "perimeter": self.perimeter,
+        }
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "RoomItem":
+        return RoomItem(
+            name=str(data.get("name", "Свободное помещение")),
+            floor=int(data.get("floor", 1)),
+            center=Point.from_dict(data.get("center", {"x": 0, "y": 0})),
+            area=float(data.get("area", 0.0)),
+            perimeter=float(data.get("perimeter", 0.0)),
+        )
+
+
+@dataclass
+class StairItem:
+    floor: int
+    position: Point
+    stair_type: str = "Прямая"
+    width: float = 0.9
+    length: float = 3.0
+    rise_height: float = 3.1
+    steps: int = 16
+    price: float = 120000.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "floor": self.floor,
+            "position": self.position.to_dict(),
+            "stair_type": self.stair_type,
+            "width": self.width,
+            "length": self.length,
+            "rise_height": self.rise_height,
+            "steps": self.steps,
+            "price": self.price,
+        }
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "StairItem":
+        return StairItem(
+            floor=int(data.get("floor", 1)),
+            position=Point.from_dict(data.get("position", {"x": 0, "y": 0})),
+            stair_type=str(data.get("stair_type", "Прямая")),
+            width=float(data.get("width", 0.9)),
+            length=float(data.get("length", 3.0)),
+            rise_height=float(data.get("rise_height", 3.1)),
+            steps=int(data.get("steps", 16)),
+            price=float(data.get("price", 120000.0)),
+        )
+
+
+@dataclass
+class FloorPlan:
+    level: int
+    name: str
+    walls: list[Wall] = field(default_factory=list)
+    doors: list[DoorItem] = field(default_factory=list)
+    windows: list[WindowItem] = field(default_factory=list)
+    rooms: list[RoomItem] = field(default_factory=list)
+    stairs: list[StairItem] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "level": self.level,
+            "name": self.name,
+            "walls": [wall.to_dict() for wall in self.walls],
+            "doors": [door.to_dict() for door in self.doors],
+            "windows": [window.to_dict() for window in self.windows],
+            "rooms": [room.to_dict() for room in self.rooms],
+            "stairs": [stair.to_dict() for stair in self.stairs],
+        }
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "FloorPlan":
+        level = int(data.get("level", 1))
+        return FloorPlan(
+            level=level,
+            name=str(data.get("name", f"План {level} этажа")),
+            walls=[Wall.from_dict(item) for item in data.get("walls", [])],
+            doors=[DoorItem.from_dict(item) for item in data.get("doors", [])],
+            windows=[WindowItem.from_dict(item) for item in data.get("windows", [])],
+            rooms=[RoomItem.from_dict(item) for item in data.get("rooms", [])],
+            stairs=[StairItem.from_dict(item) for item in data.get("stairs", [])],
+        )
+
+
 @dataclass
 class Project:
     walls: list[Wall] = field(default_factory=list)
     doors: list[DoorItem] = field(default_factory=list)
     windows: list[WindowItem] = field(default_factory=list)
+    floor_plans: list[FloorPlan] = field(default_factory=list)
     wall_height: float = 2.8
     floors: int = 1
     floor_mode: str = "1 этаж"
@@ -175,14 +296,141 @@ class Project:
     insulation_type: str = "Без утепления"
     facade_finish: str = "Без отделки"
 
+    def __post_init__(self) -> None:
+        self.ensure_floor_count(max(1, self.floors))
+
+    def ensure_floor_count(self, count: int) -> None:
+        count = max(1, count)
+        if not self.floor_plans:
+            self.floor_plans = [
+                FloorPlan(
+                    level=1,
+                    name="План 1 этажа",
+                    walls=self.walls,
+                    doors=self.doors,
+                    windows=self.windows,
+                )
+            ]
+
+        existing = {floor.level: floor for floor in self.floor_plans}
+        for level in range(1, count + 1):
+            if level not in existing:
+                self.floor_plans.append(FloorPlan(level=level, name=f"План {level} этажа"))
+        self.floor_plans.sort(key=lambda floor: floor.level)
+        self._sync_legacy_lists()
+
+    def visible_floor_levels(self) -> list[int]:
+        if self.floor_mode == "2 этажа":
+            self.ensure_floor_count(2)
+            return [1, 2]
+        return [1]
+
+    def visible_floors(self) -> list[FloorPlan]:
+        return [self.get_floor(level) for level in self.visible_floor_levels()]
+
+    def all_floors(self) -> list[FloorPlan]:
+        self.ensure_floor_count(max(1, self.floors, len(self.floor_plans)))
+        return list(self.floor_plans)
+
+    def get_floor(self, level: int) -> FloorPlan:
+        self.ensure_floor_count(level)
+        for floor in self.floor_plans:
+            if floor.level == level:
+                return floor
+        floor = FloorPlan(level=level, name=f"План {level} этажа")
+        self.floor_plans.append(floor)
+        self.floor_plans.sort(key=lambda item: item.level)
+        self._sync_legacy_lists()
+        return floor
+
+    def _sync_legacy_lists(self) -> None:
+        first_floor = next((floor for floor in self.floor_plans if floor.level == 1), None)
+        if first_floor is None:
+            first_floor = FloorPlan(level=1, name="План 1 этажа")
+            self.floor_plans.insert(0, first_floor)
+        self.walls = first_floor.walls
+        self.doors = first_floor.doors
+        self.windows = first_floor.windows
+
+    def all_walls(self) -> list[Wall]:
+        return [wall for floor in self.visible_floors() for wall in floor.walls]
+
+    def all_doors(self) -> list[DoorItem]:
+        return [door for floor in self.visible_floors() for door in floor.doors]
+
+    def all_windows(self) -> list[WindowItem]:
+        return [window for floor in self.visible_floors() for window in floor.windows]
+
+    def all_rooms(self) -> list[RoomItem]:
+        return [room for floor in self.visible_floors() for room in floor.rooms]
+
+    def all_stairs(self) -> list[StairItem]:
+        return [stair for floor in self.visible_floors() for stair in floor.stairs]
+
+    def create_second_floor_from_first(self) -> None:
+        first = self.get_floor(1)
+        second = self.get_floor(2)
+        exterior_walls = self._exterior_walls(first.walls)
+        second.walls = []
+        for wall in exterior_walls:
+            second.walls.append(
+                Wall(
+                    start=Point(wall.start.x, wall.start.y),
+                    end=Point(wall.end.x, wall.end.y),
+                    height=self.floor_2_height,
+                    thickness=wall.thickness,
+                    material=wall.material,
+                    price_per_m2=wall.price_per_m2,
+                    is_load_bearing=wall.is_load_bearing,
+                )
+            )
+        second.doors = []
+        second.windows = []
+        second.rooms = []
+        second.stairs = []
+        self.floor_mode = "2 этажа"
+        self.floors = 2
+        self._sync_legacy_lists()
+
+    def _exterior_walls(self, walls: list[Wall]) -> list[Wall]:
+        if not walls:
+            return []
+        xs = [point.x for wall in walls for point in (wall.start, wall.end)]
+        ys = [point.y for wall in walls for point in (wall.start, wall.end)]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        tolerance = PIXELS_PER_METER * 0.25
+        exterior: list[Wall] = []
+        for wall in walls:
+            mid_x = (wall.start.x + wall.end.x) / 2
+            mid_y = (wall.start.y + wall.end.y) / 2
+            dx = abs(wall.end.x - wall.start.x)
+            dy = abs(wall.end.y - wall.start.y)
+            horizontal_edge = dx >= dy and (abs(mid_y - min_y) <= tolerance or abs(mid_y - max_y) <= tolerance)
+            vertical_edge = dy > dx and (abs(mid_x - min_x) <= tolerance or abs(mid_x - max_x) <= tolerance)
+            if horizontal_edge or vertical_edge:
+                exterior.append(wall)
+        return exterior or [wall for wall in walls if wall.is_load_bearing] or list(walls)
+
     def total_wall_length_m(self) -> float:
-        return sum(wall.length_m for wall in self.walls)
+        return sum(wall.length_m for wall in self.all_walls())
 
     def wall_area_m2(self) -> float:
-        return sum(wall.area_m2() for wall in self.walls) * self.wall_storey_multiplier()
+        area = sum(wall.area_m2() for wall in self.all_walls())
+        if self.floor_mode == "1 этаж + мансарда":
+            return area * 1.35
+        return area
 
     def approximate_house_area_m2(self) -> float:
-        return self.footprint_area_m2() * self.floor_area_multiplier()
+        if self.floor_mode == "1 этаж + мансарда":
+            return self.floor_area_m2(1) * 1.5
+        return sum(self.floor_area_m2(level) for level in self.visible_floor_levels())
+
+    def floor_area_m2(self, level: int) -> float:
+        return self._walls_area_m2(self.get_floor(level).walls)
+
+    def floor_perimeter_m(self, level: int) -> float:
+        return sum(wall.length_m for wall in self.get_floor(level).walls if wall.is_load_bearing)
 
     def floor_area_multiplier(self) -> float:
         if self.floor_mode == "2 этажа":
@@ -237,12 +485,15 @@ class Project:
         self.roof_ridge_height = (span / 2) * tan(radians(angle))
 
     def footprint_area_m2(self) -> float:
-        if len(self.walls) < 3:
+        return self.floor_area_m2(1)
+
+    def _walls_area_m2(self, walls: list[Wall]) -> float:
+        if len(walls) < 3:
             return 0.0
 
         points: list[Point] = []
         seen: set[tuple[float, float]] = set()
-        for wall in self.walls:
+        for wall in walls:
             for point in (wall.start, wall.end):
                 key = (round(point.x, 3), round(point.y, 3))
                 if key not in seen:
@@ -263,26 +514,29 @@ class Project:
                 return area_m2
 
         # Если контур ещё не замкнут, используем габарит как понятную приблизительную оценку.
-        xs = [point.x for wall in self.walls for point in (wall.start, wall.end)]
-        ys = [point.y for wall in self.walls for point in (wall.start, wall.end)]
+        xs = [point.x for wall in walls for point in (wall.start, wall.end)]
+        ys = [point.y for wall in walls for point in (wall.start, wall.end)]
         width_m = (max(xs) - min(xs)) / PIXELS_PER_METER
         height_m = (max(ys) - min(ys)) / PIXELS_PER_METER
         return max(0.0, width_m * height_m)
 
     def footprint_bounds_m(self) -> tuple[float, float]:
-        if not self.walls:
+        walls = self.get_floor(1).walls
+        if not walls:
             return 0.0, 0.0
-        xs = [point.x for wall in self.walls for point in (wall.start, wall.end)]
-        ys = [point.y for wall in self.walls for point in (wall.start, wall.end)]
+        xs = [point.x for wall in walls for point in (wall.start, wall.end)]
+        ys = [point.y for wall in walls for point in (wall.start, wall.end)]
         width_m = (max(xs) - min(xs)) / PIXELS_PER_METER
         height_m = (max(ys) - min(ys)) / PIXELS_PER_METER
         return max(0.0, width_m), max(0.0, height_m)
 
     def to_dict(self) -> dict[str, Any]:
+        self._sync_legacy_lists()
         return {
             "walls": [wall.to_dict() for wall in self.walls],
             "doors": [door.to_dict() for door in self.doors],
             "windows": [window.to_dict() for window in self.windows],
+            "floor_plans": [floor.to_dict() for floor in self.floor_plans],
             "wall_height": self.wall_height,
             "floors": self.floors,
             "floor_mode": self.floor_mode,
@@ -320,10 +574,31 @@ class Project:
             elif kind in ("окно", "window"):
                 windows.append(WindowItem(int(opening["wall_index"]), float(opening.get("position", 0.5))))
 
+        if data.get("floor_plans"):
+            floor_plans = [FloorPlan.from_dict(item) for item in data.get("floor_plans", [])]
+            first = next((floor for floor in floor_plans if floor.level == 1), FloorPlan(level=1, name="План 1 этажа"))
+            legacy_walls = first.walls
+            legacy_doors = first.doors
+            legacy_windows = first.windows
+        else:
+            legacy_walls = [Wall.from_dict(item) for item in data.get("walls", [])]
+            legacy_doors = doors
+            legacy_windows = windows
+            floor_plans = [
+                FloorPlan(
+                    level=1,
+                    name="План 1 этажа",
+                    walls=legacy_walls,
+                    doors=legacy_doors,
+                    windows=legacy_windows,
+                )
+            ]
+
         project = Project(
-            walls=[Wall.from_dict(item) for item in data.get("walls", [])],
-            doors=doors,
-            windows=windows,
+            walls=legacy_walls,
+            doors=legacy_doors,
+            windows=legacy_windows,
+            floor_plans=floor_plans,
             wall_height=float(data.get("wall_height", 2.8)),
             floors=int(data.get("floors", 1)),
             floor_mode=str(data.get("floor_mode", "2 этажа" if int(data.get("floors", 1)) == 2 else "1 этаж")),
@@ -356,7 +631,8 @@ class Project:
         }
         project.wall_material = material_aliases.get(project.wall_material, project.wall_material)
         project.floors = 2 if project.floor_mode == "2 этажа" else 1
-        for wall in project.walls:
+        project.ensure_floor_count(max(1, project.floors))
+        for wall in project.all_walls():
             wall.material = material_aliases.get(wall.material, wall.material)
             if not wall.material:
                 wall.material = project.wall_material
