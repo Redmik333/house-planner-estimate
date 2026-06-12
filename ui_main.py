@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
-    QStackedWidget,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -44,6 +43,7 @@ from pricing import (
     wall_material_info,
 )
 from storage import export_text, load_project, save_project
+from section_view import SectionView
 
 
 class OpeningTemplateDialog(QDialog):
@@ -174,6 +174,7 @@ class MainWindow(QMainWindow):
         self.materials = load_materials()
         self.canvas = PlanCanvas(self.project)
         self.facade_view = FacadeView(self.project)
+        self.section_view = SectionView(self.project)
         self.roof_preview: RoofPreviewWidget | None = None
         self.estimate: dict[str, float] = {}
         self._updating_controls = False
@@ -238,6 +239,7 @@ class MainWindow(QMainWindow):
         facade_layout.addLayout(facade_controls)
         facade_layout.addWidget(self.facade_view, stretch=1)
         tabs.addTab(facade_tab, "Фасад")
+        tabs.addTab(self.section_view, "Разрез")
         return tabs
 
     def _build_tools_panel(self) -> QWidget:
@@ -288,30 +290,45 @@ class MainWindow(QMainWindow):
         self.export_button.clicked.connect(self._export_txt)
 
         layout.addStretch()
-        help_label = QLabel("Окна и двери выбираются по шаблону и ставятся кликом по существующей стене.")
-        help_label.setWordWrap(True)
-        layout.addWidget(help_label)
+        self.roof_mode_box = QGroupBox("Режим крыши")
+        roof_mode_layout = QFormLayout(self.roof_mode_box)
+        roof_mode_layout.setVerticalSpacing(6)
+        self.roof_mode_labels: dict[str, QLabel] = {}
+        for key, caption in {
+            "type": "Тип",
+            "angle": "Угол",
+            "ridge": "Конёк",
+            "area": "Площадь",
+            "slope": "Скат",
+            "cost": "Стоимость",
+        }.items():
+            label = QLabel("0")
+            label.setAlignment(Qt.AlignRight)
+            self.roof_mode_labels[key] = label
+            roof_mode_layout.addRow(caption, label)
+        self.roof_mode_box.setVisible(False)
+        layout.addWidget(self.roof_mode_box)
+
+        self.help_label = QLabel("Окна и двери выбираются по шаблону и ставятся кликом по существующей стене.")
+        self.help_label.setWordWrap(True)
+        layout.addWidget(self.help_label)
         return panel
 
     def _build_right_panel(self) -> QWidget:
         panel = QFrame()
-        panel.setFixedWidth(450)
+        panel.setFixedWidth(470)
         panel.setFrameShape(QFrame.StyledPanel)
         layout = QVBoxLayout(panel)
+        layout.setContentsMargins(10, 10, 10, 10)
 
-        self.params_stack = QStackedWidget()
-        self.params_stack.addWidget(self._build_project_panel())
-        self.params_stack.addWidget(self._build_wall_panel())
-        self.params_stack.addWidget(self._build_door_panel())
-        self.params_stack.addWidget(self._build_window_panel())
-
-        params_scroll = QScrollArea()
-        params_scroll.setWidgetResizable(True)
-        params_scroll.setFrameShape(QFrame.NoFrame)
-        params_scroll.setWidget(self.params_stack)
-        params_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        layout.addWidget(params_scroll, stretch=2)
-        layout.addWidget(self._build_estimate_box(), stretch=1)
+        self.right_tabs = QTabWidget()
+        self.right_tabs.addTab(self._scroll_panel(self._build_project_panel()), "Дом")
+        self.right_tabs.addTab(self._scroll_panel(self._build_wall_panel()), "Стены")
+        self.right_tabs.addTab(self._scroll_panel(self._build_roof_panel()), "Крыша")
+        self.right_tabs.addTab(self._scroll_panel(self._build_window_panel()), "Окна")
+        self.right_tabs.addTab(self._scroll_panel(self._build_door_panel()), "Двери")
+        self.right_tabs.addTab(self._scroll_panel(self._build_estimate_box()), "Смета")
+        layout.addWidget(self.right_tabs)
         return panel
 
     def _build_project_panel(self) -> QWidget:
@@ -347,11 +364,20 @@ class MainWindow(QMainWindow):
         form.addRow("Утепление", self.insulation_combo)
         form.addRow("Фасадная отделка", self.facade_finish_combo)
 
-        roof_box = QGroupBox("Крыша")
-        roof_form = QFormLayout(roof_box)
-        self._setup_form(roof_form)
+        layout.addWidget(box)
+        layout.addStretch()
+        return container
+
+    def _build_roof_panel(self) -> QWidget:
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        box = QGroupBox("Крыша")
+        form = QFormLayout(box)
+        self._setup_form(form)
         self.show_roof_check = QCheckBox("Показать крышу на плане")
-        self.auto_roof_height_check = QCheckBox("Автоматически рассчитывать высоту конька")
+        self.auto_roof_height_check = QCheckBox("Автоматически рассчитывать конёк")
         self.roof_type_combo = self._section_combo("roof_types")
         self.roof_direction_combo = QComboBox()
         self.roof_direction_combo.addItems(["по X", "по Y"])
@@ -359,21 +385,48 @@ class MainWindow(QMainWindow):
         self.roof_angle_spin = self._plain_spin(1, 60, 1, 0, "°")
         self.roof_ridge_height_spin = self._meter_spin(0.1, 8.0, 0.1, 1)
         self.roof_overhang_spin = self._meter_spin(0.0, 2.0, 0.1, 1)
+        self.roof_gable_height_spin = self._meter_spin(0.0, 5.0, 0.1, 1)
         self.roof_complexity_spin = self._plain_spin(0.5, 3.0, 0.05, 2, "")
-        roof_form.addRow("", self.show_roof_check)
-        roof_form.addRow("Тип крыши", self.roof_type_combo)
-        roof_form.addRow("Направление конька", self.roof_direction_combo)
-        roof_form.addRow("Материал кровли", self.roofing_combo)
-        roof_form.addRow("Угол наклона", self.roof_angle_spin)
-        roof_form.addRow("", self.auto_roof_height_check)
-        roof_form.addRow("Высота конька", self.roof_ridge_height_spin)
-        roof_form.addRow("Свес крыши", self.roof_overhang_spin)
-        roof_form.addRow("Сложность", self.roof_complexity_spin)
+        form.addRow("", self.show_roof_check)
+        form.addRow("Тип крыши", self.roof_type_combo)
+        form.addRow("Материал кровли", self.roofing_combo)
+        form.addRow("Направление конька", self.roof_direction_combo)
+        form.addRow("Угол наклона", self.roof_angle_spin)
+        form.addRow("", self.auto_roof_height_check)
+        form.addRow("Высота конька", self.roof_ridge_height_spin)
+        form.addRow("Свес крыши", self.roof_overhang_spin)
+        form.addRow("Высота фронтона", self.roof_gable_height_spin)
+        form.addRow("Сложность", self.roof_complexity_spin)
+
+        summary_box = QGroupBox("Расчёт крыши")
+        summary_form = QFormLayout(summary_box)
+        self._setup_form(summary_form)
+        self.roof_labels: dict[str, QLabel] = {}
+        for key, caption in {
+            "type": "Тип крыши",
+            "angle": "Угол",
+            "ridge_height": "Высота конька",
+            "ridge_length": "Длина конька",
+            "overhang": "Свес",
+            "roof_area": "Площадь кровли",
+            "slope_area": "Площадь ската",
+            "material": "Материал",
+            "weight": "Вес кровли",
+            "service_life": "Срок службы",
+            "cost": "Стоимость",
+        }.items():
+            label = QLabel("0")
+            label.setAlignment(Qt.AlignRight)
+            if key == "cost":
+                label.setObjectName("TotalLabel")
+            self.roof_labels[key] = label
+            summary_form.addRow(caption, label)
+
         self.roof_preview = RoofPreviewWidget(self.project)
-        roof_form.addRow("3D-просмотр", self.roof_preview)
 
         layout.addWidget(box)
-        layout.addWidget(roof_box)
+        layout.addWidget(summary_box)
+        layout.addWidget(self.roof_preview)
         layout.addStretch()
         return container
 
@@ -459,8 +512,12 @@ class MainWindow(QMainWindow):
             "walls_cost": "Стены",
             "foundation_cost": "Фундамент",
             "roof_type": "Тип крыши",
+            "roof_angle": "Угол крыши",
+            "roof_ridge_height": "Высота конька",
+            "roof_overhang": "Свес",
             "roofing": "Кровля",
             "roof_area": "Площадь крыши",
+            "roof_slope_area": "Площадь ската",
             "roof_cost": "Крыша",
             "windows_cost": "Окна",
             "doors_cost": "Двери",
@@ -501,6 +558,7 @@ class MainWindow(QMainWindow):
             self.roof_angle_spin.valueChanged,
             self.roof_ridge_height_spin.valueChanged,
             self.roof_overhang_spin.valueChanged,
+            self.roof_gable_height_spin.valueChanged,
             self.roof_complexity_spin.valueChanged,
         ):
             signal.connect(self._apply_project_params)
@@ -543,8 +601,18 @@ class MainWindow(QMainWindow):
                 self.canvas.set_tool("select")
                 return
             self.canvas.set_window_template(dialog.values())
+        elif tool == "roof":
+            self.project.show_roof = True
+            self.show_roof_check.setChecked(True)
+            self.right_tabs.setCurrentIndex(2)
         self._set_active_tool(tool)
         self.canvas.set_tool(tool)
+        self.roof_mode_box.setVisible(tool == "roof")
+        if tool == "roof":
+            self.help_label.setText("Режим крыши: настройте тип, угол, конёк и кровлю справа. На плане подсвечиваются свесы, фронтоны и скаты.")
+        else:
+            self.help_label.setText("Окна и двери выбираются по шаблону и ставятся кликом по существующей стене.")
+        self._refresh_roof_mode_summary()
 
     def _set_active_tool(self, tool: str) -> None:
         if tool in self.tool_buttons:
@@ -570,20 +638,24 @@ class MainWindow(QMainWindow):
         self.project.roofing = self._combo_value(self.roofing_combo)
         self.project.roof_angle = float(self.roof_angle_spin.value())
         self.project.auto_roof_ridge_height = self.auto_roof_height_check.isChecked()
-        if not self.project.auto_roof_ridge_height:
+        auto_ridge_active = self.project.auto_roof_ridge_height and self.project.roof_type == "Двускатная"
+        if not auto_ridge_active:
             self.project.roof_ridge_height = float(self.roof_ridge_height_spin.value())
         self.project.roof_overhang = float(self.roof_overhang_spin.value())
+        self.project.roof_gable_height = float(self.roof_gable_height_spin.value())
         self.project.roof_complexity = float(self.roof_complexity_spin.value())
         self.project.show_roof = self.show_roof_check.isChecked()
         self.project.update_auto_roof_height()
-        self.roof_ridge_height_spin.setEnabled(not self.project.auto_roof_ridge_height)
-        if self.project.auto_roof_ridge_height:
+        self.auto_roof_height_check.setEnabled(self.project.roof_type == "Двускатная")
+        self.roof_ridge_height_spin.setEnabled(not auto_ridge_active)
+        if auto_ridge_active:
             self.roof_ridge_height_spin.blockSignals(True)
             self.roof_ridge_height_spin.setValue(self.project.roof_ridge_height)
             self.roof_ridge_height_spin.blockSignals(False)
         self._refresh_estimate()
         self.canvas.update()
         self.facade_view.update()
+        self.section_view.update()
         if self.roof_preview is not None:
             self.roof_preview.update()
 
@@ -600,6 +672,7 @@ class MainWindow(QMainWindow):
         self._refresh_estimate()
         self.canvas.update()
         self.facade_view.update()
+        self.section_view.update()
 
     def _wall_material_changed(self) -> None:
         if self._updating_controls:
@@ -649,6 +722,7 @@ class MainWindow(QMainWindow):
         self._refresh_estimate()
         self.canvas.update()
         self.facade_view.update()
+        self.section_view.update()
 
     def _window_template_changed(self) -> None:
         if self._updating_controls or self.canvas.selected_kind != "window":
@@ -695,8 +769,14 @@ class MainWindow(QMainWindow):
         self.labels["walls_cost"].setText(format_money(self.estimate["walls_cost"]))
         self.labels["foundation_cost"].setText(format_money(self.estimate["foundation_cost"]))
         self.labels["roof_type"].setText(self.project.roof_type)
+        self.labels["roof_angle"].setText(f"{self.project.roof_angle:.0f}°")
+        self.labels["roof_ridge_height"].setText(f"{self.project.roof_ridge_height:.1f} м")
+        self.labels["roof_overhang"].setText(f"{self.project.roof_overhang:.1f} м")
         self.labels["roofing"].setText(self.project.roofing)
         self.labels["roof_area"].setText(f"{self.estimate['roof_area']:.1f} м²")
+        self.labels["roof_slope_area"].setText(
+            f"{int(self.estimate['roof_slope_count'])} x {self.estimate['roof_slope_area']:.1f} м²"
+        )
         self.labels["roof_cost"].setText(format_money(self.estimate["roof_cost"]))
         self.labels["windows_cost"].setText(format_money(self.estimate["windows_cost"]))
         self.labels["doors_cost"].setText(format_money(self.estimate["doors_cost"]))
@@ -704,19 +784,47 @@ class MainWindow(QMainWindow):
         self.labels["facade_cost"].setText(format_money(self.estimate["facade_cost"]))
         self.labels["complexity_extra"].setText(format_money(self.estimate["complexity_extra"]))
         self.labels["total"].setText(format_money(self.estimate["total"]))
-        if hasattr(self, "roof_ridge_height_spin") and self.project.auto_roof_ridge_height:
+        if hasattr(self, "roof_ridge_height_spin") and self.project.auto_roof_ridge_height and self.project.roof_type == "Двускатная":
             self.roof_ridge_height_spin.blockSignals(True)
             self.roof_ridge_height_spin.setValue(self.project.roof_ridge_height)
             self.roof_ridge_height_spin.blockSignals(False)
+        if hasattr(self, "roof_labels"):
+            self.roof_labels["type"].setText(self.project.roof_type)
+            self.roof_labels["angle"].setText(f"{self.project.roof_angle:.0f}°")
+            self.roof_labels["ridge_height"].setText(f"{self.project.roof_ridge_height:.1f} м")
+            self.roof_labels["ridge_length"].setText(f"{self.estimate['roof_ridge_length']:.1f} м")
+            self.roof_labels["overhang"].setText(f"{self.project.roof_overhang:.1f} м")
+            self.roof_labels["roof_area"].setText(f"{self.estimate['roof_area']:.1f} м²")
+            self.roof_labels["slope_area"].setText(
+                f"{int(self.estimate['roof_slope_count'])} x {self.estimate['roof_slope_area']:.1f} м²"
+            )
+            self.roof_labels["material"].setText(self.project.roofing)
+            self.roof_labels["weight"].setText(f"{self.estimate['roof_weight']:.0f} кг")
+            self.roof_labels["service_life"].setText(f"{self.estimate['roof_service_life']:.0f} лет")
+            self.roof_labels["cost"].setText(format_money(self.estimate["roof_cost"]))
+        self._refresh_roof_mode_summary()
         self.facade_view.update()
+        self.section_view.update()
         if self.roof_preview is not None:
             self.roof_preview.update()
+
+    def _refresh_roof_mode_summary(self) -> None:
+        if not hasattr(self, "roof_mode_labels") or not self.estimate:
+            return
+        self.roof_mode_labels["type"].setText(self.project.roof_type)
+        self.roof_mode_labels["angle"].setText(f"{self.project.roof_angle:.0f}°")
+        self.roof_mode_labels["ridge"].setText(f"{self.project.roof_ridge_height:.1f} м")
+        self.roof_mode_labels["area"].setText(f"{self.estimate['roof_area']:.1f} м²")
+        self.roof_mode_labels["slope"].setText(
+            f"{int(self.estimate['roof_slope_count'])} x {self.estimate['roof_slope_area']:.1f}"
+        )
+        self.roof_mode_labels["cost"].setText(format_money(self.estimate["roof_cost"]))
 
     def _refresh_selection_panel(self, kind: str, index: int) -> None:
         self._updating_controls = True
         try:
             if kind == "wall" and index >= 0:
-                self.params_stack.setCurrentIndex(1)
+                self.right_tabs.setCurrentIndex(1)
                 wall = self.project.walls[index]
                 self.wall_length_spin.setValue(max(0.2, wall.length_m))
                 self.wall_height_spin.setValue(wall.height)
@@ -725,7 +833,7 @@ class MainWindow(QMainWindow):
                 self.wall_price_spin.setValue(float(wall.price_per_m2 or self._wall_rate(wall.material, wall.thickness)))
                 self.load_bearing_check.setChecked(wall.is_load_bearing)
             elif kind == "door" and index >= 0:
-                self.params_stack.setCurrentIndex(2)
+                self.right_tabs.setCurrentIndex(4)
                 door = self.project.doors[index]
                 self._set_combo_value(self.door_template_combo, door.template_name)
                 self.door_width_spin.setValue(door.width)
@@ -734,7 +842,7 @@ class MainWindow(QMainWindow):
                 self.door_hinge_combo.setCurrentText(door.hinge_side)
                 self.door_price_spin.setValue(door.price)
             elif kind == "window" and index >= 0:
-                self.params_stack.setCurrentIndex(3)
+                self.right_tabs.setCurrentIndex(3)
                 window = self.project.windows[index]
                 self._set_combo_value(self.window_template_combo, window.template_name)
                 self.window_width_spin.setValue(window.width)
@@ -744,8 +852,13 @@ class MainWindow(QMainWindow):
                 self.window_price_spin.setValue(window.price)
                 self.window_price_m2_spin.setValue(window.price_per_m2)
                 self.window_count_spin.setValue(window.count)
+            elif kind == "roof":
+                self.right_tabs.setCurrentIndex(2)
+                self.project.show_roof = True
+                if hasattr(self, "show_roof_check"):
+                    self.show_roof_check.setChecked(True)
             else:
-                self.params_stack.setCurrentIndex(0)
+                self.right_tabs.setCurrentIndex(0)
                 self._sync_controls_from_project()
         finally:
             self._updating_controls = False
@@ -754,6 +867,7 @@ class MainWindow(QMainWindow):
         self.project = Project()
         self.canvas.set_project(self.project)
         self.facade_view.set_project(self.project)
+        self.section_view.set_project(self.project)
         if self.roof_preview is not None:
             self.roof_preview.set_project(self.project)
         self._sync_controls_from_project()
@@ -767,6 +881,7 @@ class MainWindow(QMainWindow):
             self.project = load_project(path)
             self.canvas.set_project(self.project)
             self.facade_view.set_project(self.project)
+            self.section_view.set_project(self.project)
             if self.roof_preview is not None:
                 self.roof_preview.set_project(self.project)
             self._sync_controls_from_project()
@@ -818,10 +933,13 @@ class MainWindow(QMainWindow):
             self.roof_angle_spin.setValue(self.project.roof_angle)
             self.roof_ridge_height_spin.setValue(self.project.roof_ridge_height)
             self.roof_overhang_spin.setValue(self.project.roof_overhang)
+            self.roof_gable_height_spin.setValue(self.project.roof_gable_height)
             self.roof_complexity_spin.setValue(self.project.roof_complexity)
             self.auto_roof_height_check.setChecked(self.project.auto_roof_ridge_height)
             self.show_roof_check.setChecked(self.project.show_roof)
-            self.roof_ridge_height_spin.setEnabled(not self.project.auto_roof_ridge_height)
+            auto_ridge_active = self.project.auto_roof_ridge_height and self.project.roof_type == "Двускатная"
+            self.auto_roof_height_check.setEnabled(self.project.roof_type == "Двускатная")
+            self.roof_ridge_height_spin.setEnabled(not auto_ridge_active)
         finally:
             self._updating_controls = False
         self._refresh_estimate()
@@ -832,6 +950,13 @@ class MainWindow(QMainWindow):
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         form.setHorizontalSpacing(14)
         form.setVerticalSpacing(10)
+
+    def _scroll_panel(self, widget: QWidget) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(widget)
+        return scroll
 
     def _wall_combo(self) -> QComboBox:
         combo = QComboBox()

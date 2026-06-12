@@ -167,6 +167,7 @@ class Project:
     roof_angle: float = 30.0
     roof_ridge_height: float = 2.0
     roof_overhang: float = 0.5
+    roof_gable_height: float = 1.6
     roof_complexity: float = 1.0
     auto_roof_ridge_height: bool = True
     show_roof: bool = False
@@ -207,6 +208,24 @@ class Project:
     def roof_span_width_m(self) -> float:
         width_m, depth_m = self.footprint_bounds_m()
         return width_m if self.roof_ridge_direction == "по Y" else depth_m
+
+    def roof_ridge_length_m(self) -> float:
+        width_m, depth_m = self.footprint_bounds_m()
+        if self.roof_type == "Плоская":
+            return 0.0
+        if self.roof_type in ("Односкатная", "Шатровая"):
+            return 0.0
+        length = depth_m if self.roof_ridge_direction == "по Y" else width_m
+        if self.roof_type in ("Вальмовая", "Полувальмовая"):
+            length *= 0.65
+        return max(0.0, length)
+
+    def roof_slope_count(self) -> int:
+        if self.roof_type in ("Плоская", "Односкатная"):
+            return 1
+        if self.roof_type == "Двускатная":
+            return 2
+        return 4
 
     def update_auto_roof_height(self) -> None:
         if not self.auto_roof_ridge_height or self.roof_type != "Двускатная":
@@ -279,6 +298,7 @@ class Project:
             "roof_angle": self.roof_angle,
             "roof_ridge_height": self.roof_ridge_height,
             "roof_overhang": self.roof_overhang,
+            "roof_gable_height": self.roof_gable_height,
             "roof_complexity": self.roof_complexity,
             "auto_roof_ridge_height": self.auto_roof_ridge_height,
             "show_roof": self.show_roof,
@@ -319,6 +339,7 @@ class Project:
             roof_angle=float(data.get("roof_angle", 30.0)),
             roof_ridge_height=float(data.get("roof_ridge_height", 2.0)),
             roof_overhang=float(data.get("roof_overhang", 0.5)),
+            roof_gable_height=float(data.get("roof_gable_height", data.get("gable_height", 1.6))),
             roof_complexity=float(data.get("roof_complexity", 1.0)),
             auto_roof_ridge_height=bool(data.get("auto_roof_ridge_height", True)),
             show_roof=bool(data.get("show_roof", False)),

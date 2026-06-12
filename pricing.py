@@ -109,7 +109,8 @@ def calculate_estimate(project: Project, materials: dict[str, Any]) -> dict[str,
     foundation_factor = float(foundation.get("complexity_factor", 1) or 1)
     foundation_cost = footprint_area * foundation_rate * foundation_factor
 
-    roof_area = calculate_roof_area(project, materials)
+    roof_metrics = calculate_roof_metrics(project, materials)
+    roof_area = roof_metrics["roof_area"]
     roofing = section_item(materials, "roofing_materials", project.roofing)
     roof_type = section_item(materials, "roof_types", project.roof_type)
     roofing_rate = float(roofing.get("price_per_m2", 0) or 0)
@@ -145,6 +146,16 @@ def calculate_estimate(project: Project, materials: dict[str, Any]) -> dict[str,
         "foundation_cost": foundation_cost,
         "roof_cost": roof_cost,
         "roof_area": roof_area,
+        "roof_slope_count": roof_metrics["slope_count"],
+        "roof_slope_area": roof_metrics["slope_area"],
+        "roof_ridge_length": roof_metrics["ridge_length"],
+        "roof_span_width": roof_metrics["span_width"],
+        "roof_base_width": roof_metrics["base_width"],
+        "roof_base_depth": roof_metrics["base_depth"],
+        "roof_weight": roof_area * float(roofing.get("weight_per_m2", 0) or 0),
+        "roof_waste_factor": waste_factor,
+        "roof_installation_complexity": install_factor,
+        "roof_service_life": float(roofing.get("service_life_years", 0) or 0),
         "windows_cost": windows_cost,
         "doors_cost": doors_cost,
         "openings_cost": openings_cost,
@@ -158,16 +169,38 @@ def calculate_estimate(project: Project, materials: dict[str, Any]) -> dict[str,
 
 
 def calculate_roof_area(project: Project, materials: dict[str, Any]) -> float:
+    return calculate_roof_metrics(project, materials)["roof_area"]
+
+
+def calculate_roof_metrics(project: Project, materials: dict[str, Any]) -> dict[str, float]:
     width_m, depth_m = project.footprint_bounds_m()
     if width_m <= 0 or depth_m <= 0:
-        return 0.0
+        return {
+            "roof_area": 0.0,
+            "slope_count": float(project.roof_slope_count()),
+            "slope_area": 0.0,
+            "ridge_length": 0.0,
+            "span_width": 0.0,
+            "base_width": 0.0,
+            "base_depth": 0.0,
+        }
     base_area = (width_m + project.roof_overhang * 2) * (depth_m + project.roof_overhang * 2)
     roof_type = section_item(materials, "roof_types", project.roof_type)
     area_factor = float(roof_type.get("area_factor", 1.25) or 1.25)
     can_edit_angle = bool(roof_type.get("can_edit_angle", project.roof_type != "Плоская"))
     angle = max(1.0, min(60.0, project.roof_angle))
     angle_factor = 1.0 if not can_edit_angle else 1 / max(0.35, cos(radians(angle)))
-    return base_area * area_factor * angle_factor
+    roof_area = base_area * area_factor * angle_factor
+    slope_count = max(1, project.roof_slope_count())
+    return {
+        "roof_area": roof_area,
+        "slope_count": float(slope_count),
+        "slope_area": roof_area / slope_count,
+        "ridge_length": project.roof_ridge_length_m(),
+        "span_width": project.roof_span_width_m(),
+        "base_width": width_m + project.roof_overhang * 2,
+        "base_depth": depth_m + project.roof_overhang * 2,
+    }
 
 
 def format_money(value: float) -> str:
@@ -192,6 +225,7 @@ def estimate_to_text(project: Project, estimate: dict[str, float]) -> str:
             f"Угол крыши: {project.roof_angle:.0f}°",
             f"Высота конька: {project.roof_ridge_height:.1f} м",
             f"Свес крыши: {project.roof_overhang:.1f} м",
+            f"Высота фронтона: {project.roof_gable_height:.1f} м",
             f"Коэффициент сложности: {project.roof_complexity:.2f}",
             f"Утепление: {project.insulation_type}",
             f"Фасад: {project.facade_finish}",
@@ -205,6 +239,8 @@ def estimate_to_text(project: Project, estimate: dict[str, float]) -> str:
             f"Площадь стен: {estimate['wall_area']:.1f} м²",
             f"Средняя толщина стен: {estimate['wall_thickness']:.2f} м",
             f"Примерная площадь крыши: {estimate['roof_area']:.1f} м²",
+            f"Площадь одного ската: {estimate['roof_slope_area']:.1f} м²",
+            f"Длина конька: {estimate['roof_ridge_length']:.1f} м",
             f"Стоимость стен: {format_money(estimate['walls_cost'])}",
             f"Стоимость фундамента: {format_money(estimate['foundation_cost'])}",
             f"Стоимость крыши: {format_money(estimate['roof_cost'])}",

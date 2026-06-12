@@ -43,7 +43,7 @@ class PlanCanvas(QWidget):
         self._draft_end = None
         if tool == "roof":
             self.project.show_roof = True
-            self._select("project", -1)
+            self._select("roof", -1)
             self.project_changed.emit()
         self.update()
 
@@ -124,6 +124,11 @@ class PlanCanvas(QWidget):
                 self._select("window", len(self.project.windows) - 1)
                 self.project_changed.emit()
                 self.update()
+        elif self.tool == "roof":
+            self.project.show_roof = True
+            self._select("roof", -1)
+            self.project_changed.emit()
+            self.update()
         else:
             kind, index = self._element_at(pos)
             self._select(kind, index)
@@ -295,14 +300,23 @@ class PlanCanvas(QWidget):
     def _draw_roof_overlay(self, painter: QPainter) -> None:
         if not self.project.show_roof or not self.project.walls:
             return
-        roof_points = self._roof_polygon_points()
+        base_points = self._roof_base_polygon_points()
+        roof_points = self._expanded_polygon_points(base_points, self.project.roof_overhang * PIXELS_PER_METER)
         if len(roof_points) < 3:
             return
 
+        selected = self.selected_kind == "roof" or self.tool == "roof"
+        outline_width = 4 if selected else 2
+        ridge_width = 6 if selected else 4
         polygon = QPolygonF(roof_points)
-        painter.setPen(QPen(QColor(118, 83, 41, 190), 2, Qt.DashLine))
-        painter.setBrush(QBrush(QColor(184, 125, 63, 55)))
+        painter.setPen(QPen(QColor(118, 83, 41, 230), outline_width, Qt.DashLine))
+        painter.setBrush(QBrush(QColor(184, 125, 63, 70 if selected else 45)))
         painter.drawPolygon(polygon)
+
+        # Внутренний контур показывает стены, внешний пунктир - свес крыши.
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(QColor("#5f6f78"), 1, Qt.DotLine))
+        painter.drawPolygon(QPolygonF(base_points))
 
         roof_type = self.project.roof_type
         left = min(point.x() for point in roof_points)
@@ -311,13 +325,22 @@ class PlanCanvas(QWidget):
         bottom = max(point.y() for point in roof_points)
         center_x = (left + right) / 2
         center_y = (top + bottom) / 2
-        painter.setPen(QPen(QColor(136, 76, 28, 210), 2))
+        painter.setPen(QPen(QColor(136, 76, 28, 230), ridge_width, Qt.SolidLine, Qt.RoundCap))
+
+        ridge_start: QPointF | None = None
+        ridge_end: QPointF | None = None
 
         if roof_type in ("Двускатная", "Полувальмовая", "Мансардная"):
             if self.project.roof_ridge_direction == "по Y":
-                painter.drawLine(QPointF(center_x, top + 12), QPointF(center_x, bottom - 12))
+                ridge_start = QPointF(center_x, top + 18)
+                ridge_end = QPointF(center_x, bottom - 18)
             else:
-                painter.drawLine(QPointF(left + 12, center_y), QPointF(right - 12, center_y))
+                ridge_start = QPointF(left + 18, center_y)
+                ridge_end = QPointF(right - 18, center_y)
+            painter.drawLine(ridge_start, ridge_end)
+            self._draw_roof_ridge_labels(painter, ridge_start, ridge_end)
+            self._draw_gables(painter, left, right, top, bottom)
+            self._draw_slope_arrows(painter, ridge_start, ridge_end, left, right, top, bottom)
             if roof_type == "Мансардная":
                 painter.setPen(QPen(QColor(136, 76, 28, 150), 1, Qt.DashLine))
                 painter.drawLine(QPointF(left + 18, center_y - 18), QPointF(right - 18, center_y - 18))
@@ -329,9 +352,10 @@ class PlanCanvas(QWidget):
             else:
                 start = QPointF(center_x, bottom - 18)
                 end = QPointF(center_x, top + 18)
-            painter.drawLine(start, end)
-            painter.drawLine(end, QPointF(end.x() - 18, end.y() + 2))
-            painter.drawLine(end, QPointF(end.x() - 4, end.y() + 18))
+            painter.setPen(QPen(QColor(136, 76, 28, 230), 3, Qt.SolidLine, Qt.RoundCap))
+            self._draw_arrow(painter, start, end)
+            slope_mid = QPointF((start.x() + end.x()) / 2, (start.y() + end.y()) / 2)
+            self._label_box(painter, slope_mid + QPointF(10, -28), f"уклон {self.project.roof_angle:.0f}°")
         elif roof_type in ("Вальмовая", "Шатровая"):
             if self.project.roof_ridge_direction == "по Y":
                 ridge_a = QPointF(center_x, top + 22)
@@ -340,13 +364,79 @@ class PlanCanvas(QWidget):
                 ridge_a = QPointF(left + 22, center_y)
                 ridge_b = QPointF(right - 22, center_y)
             if roof_type == "Вальмовая":
+                ridge_start, ridge_end = ridge_a, ridge_b
                 painter.drawLine(ridge_a, ridge_b)
+                self._draw_roof_ridge_labels(painter, ridge_a, ridge_b)
                 targets = (ridge_a, ridge_b)
             else:
                 targets = (QPointF(center_x, center_y),)
+                self._label_box(painter, QPointF(center_x + 10, center_y - 28), f"конёк {self.project.roof_ridge_height:.1f} м")
             for corner in (QPointF(left, top), QPointF(right, top), QPointF(right, bottom), QPointF(left, bottom)):
                 target = min(targets, key=lambda item: self._distance(corner, item))
                 painter.drawLine(corner, target)
+                self._draw_arrow(painter, target, corner)
+
+        self._draw_overhang_labels(painter, base_points, roof_points)
+
+    def _draw_roof_ridge_labels(self, painter: QPainter, start: QPointF, end: QPointF) -> None:
+        length_m = self.project.roof_ridge_length_m()
+        mid = QPointF((start.x() + end.x()) / 2, (start.y() + end.y()) / 2)
+        self._label_box(painter, mid + QPointF(12, -34), f"конёк {length_m:.1f} м")
+        self._label_box(painter, mid + QPointF(12, -8), f"высота {self.project.roof_ridge_height:.1f} м")
+
+    def _draw_slope_arrows(self, painter: QPainter, ridge_start: QPointF, ridge_end: QPointF, left: float, right: float, top: float, bottom: float) -> None:
+        painter.setPen(QPen(QColor("#8d5a2d"), 2, Qt.SolidLine, Qt.RoundCap))
+        if self.project.roof_ridge_direction == "по Y":
+            for y in (top + (bottom - top) * 0.35, top + (bottom - top) * 0.65):
+                self._draw_arrow(painter, QPointF((ridge_start.x() + ridge_end.x()) / 2, y), QPointF(left + 24, y))
+                self._draw_arrow(painter, QPointF((ridge_start.x() + ridge_end.x()) / 2, y), QPointF(right - 24, y))
+        else:
+            for x in (left + (right - left) * 0.35, left + (right - left) * 0.65):
+                self._draw_arrow(painter, QPointF(x, (ridge_start.y() + ridge_end.y()) / 2), QPointF(x, top + 24))
+                self._draw_arrow(painter, QPointF(x, (ridge_start.y() + ridge_end.y()) / 2), QPointF(x, bottom - 24))
+
+    def _draw_gables(self, painter: QPainter, left: float, right: float, top: float, bottom: float) -> None:
+        painter.setPen(QPen(QColor("#a3452a"), 4, Qt.SolidLine, Qt.RoundCap))
+        if self.project.roof_ridge_direction == "по Y":
+            painter.drawLine(QPointF(left + 8, top), QPointF(right - 8, top))
+            painter.drawLine(QPointF(left + 8, bottom), QPointF(right - 8, bottom))
+            self._label_box(painter, QPointF(left + 12, top + 12), f"фронтон {self.project.roof_gable_height:.1f} м")
+        else:
+            painter.drawLine(QPointF(left, top + 8), QPointF(left, bottom - 8))
+            painter.drawLine(QPointF(right, top + 8), QPointF(right, bottom - 8))
+            self._label_box(painter, QPointF(left + 12, top + 12), f"фронтон {self.project.roof_gable_height:.1f} м")
+
+    def _draw_overhang_labels(self, painter: QPainter, base_points: list[QPointF], roof_points: list[QPointF]) -> None:
+        if not base_points or not roof_points or self.project.roof_overhang <= 0:
+            return
+        base_left = min(point.x() for point in base_points)
+        base_top = min(point.y() for point in base_points)
+        roof_left = min(point.x() for point in roof_points)
+        roof_top = min(point.y() for point in roof_points)
+        painter.setPen(QPen(QColor("#6f7a73"), 1, Qt.SolidLine))
+        self._draw_arrow(painter, QPointF(roof_left, roof_top - 14), QPointF(base_left, base_top - 14))
+        self._label_box(painter, QPointF(roof_left + 6, roof_top - 44), f"свес {self.project.roof_overhang:.1f} м")
+
+    def _draw_arrow(self, painter: QPainter, start: QPointF, end: QPointF) -> None:
+        painter.drawLine(start, end)
+        dx = end.x() - start.x()
+        dy = end.y() - start.y()
+        length = hypot(dx, dy) or 1
+        ux, uy = dx / length, dy / length
+        left = QPointF(end.x() - ux * 12 - uy * 6, end.y() - uy * 12 + ux * 6)
+        right = QPointF(end.x() - ux * 12 + uy * 6, end.y() - uy * 12 - ux * 6)
+        painter.drawLine(end, left)
+        painter.drawLine(end, right)
+
+    def _label_box(self, painter: QPainter, pos: QPointF, text: str) -> None:
+        width = max(84, len(text) * 7)
+        rect = QRectF(pos.x(), pos.y(), width, 22)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(255, 255, 255, 225))
+        painter.drawRoundedRect(rect, 5, 5)
+        painter.setPen(QPen(QColor("#46321f"), 1))
+        painter.setFont(QFont("Arial", 8, QFont.Bold))
+        painter.drawText(rect, Qt.AlignCenter, text)
 
     def _draw_hover_preview(self, painter: QPainter) -> None:
         if self.tool not in ("door", "window") or self.hover_wall < 0:
@@ -435,12 +525,19 @@ class PlanCanvas(QWidget):
         wall_index, _ = self._wall_at(pos)
         if wall_index >= 0:
             return "wall", wall_index
+        if self.project.show_roof:
+            roof_points = self._roof_polygon_points()
+            if len(roof_points) >= 3 and QPolygonF(roof_points).containsPoint(pos, Qt.OddEvenFill):
+                return "roof", -1
         return "project", -1
 
     def _snap(self, pos: QPointF) -> QPointF:
         return QPointF(round(pos.x() / self.grid_size) * self.grid_size, round(pos.y() / self.grid_size) * self.grid_size)
 
     def _roof_polygon_points(self) -> list[QPointF]:
+        return self._expanded_polygon_points(self._roof_base_polygon_points(), self.project.roof_overhang * PIXELS_PER_METER)
+
+    def _roof_base_polygon_points(self) -> list[QPointF]:
         points: list[QPointF] = []
         seen: set[tuple[float, float]] = set()
         for wall in self.project.walls:
@@ -454,9 +551,14 @@ class PlanCanvas(QWidget):
 
         center_x = sum(point.x() for point in points) / len(points)
         center_y = sum(point.y() for point in points) / len(points)
+        return sorted(points, key=lambda point: atan2(point.y() - center_y, point.x() - center_x))
+
+    def _expanded_polygon_points(self, ordered: list[QPointF], overhang_px: float) -> list[QPointF]:
+        if len(ordered) < 3:
+            return []
+        center_x = sum(point.x() for point in ordered) / len(ordered)
+        center_y = sum(point.y() for point in ordered) / len(ordered)
         center = QPointF(center_x, center_y)
-        ordered = sorted(points, key=lambda point: atan2(point.y() - center_y, point.x() - center_x))
-        overhang_px = self.project.roof_overhang * PIXELS_PER_METER
         expanded: list[QPointF] = []
         for point in ordered:
             dx = point.x() - center.x()
