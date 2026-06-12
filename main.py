@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
 from ui_main import MainWindow
 
 
-def main() -> int:
-    app = QApplication(sys.argv)
-    app.setStyleSheet(
-        """
+def apply_app_style(app: QApplication) -> None:
+    base_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    spin_up_icon = (base_dir / "assets" / "spin_up.svg").as_posix()
+    spin_down_icon = (base_dir / "assets" / "spin_down.svg").as_posix()
+    style = """
         QWidget {
             font-family: Segoe UI, Arial;
             font-size: 15px;
@@ -31,17 +33,27 @@ def main() -> int:
             border: 1px solid #d9e0dc;
             border-radius: 12px;
         }
+        QScrollArea {
+            background: transparent;
+            border: none;
+        }
+        QScrollArea > QWidget > QWidget {
+            background: transparent;
+        }
         QGroupBox {
-            margin-top: 16px;
-            padding: 16px;
+            margin-top: 14px;
+            padding: 18px 14px 14px 14px;
+            font-weight: 600;
         }
         QGroupBox::title {
             subcontrol-origin: margin;
+            subcontrol-position: top left;
             left: 14px;
             padding: 0 8px;
             font-weight: bold;
             color: #21302f;
             background: #ffffff;
+            border: none;
         }
         QLabel {
             color: #172126;
@@ -75,6 +87,11 @@ def main() -> int:
             background: #eef3ef;
             border-top-right-radius: 9px;
         }
+        QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+            image: url("__SPIN_UP_ICON__");
+            width: 10px;
+            height: 10px;
+        }
         QSpinBox::down-button, QDoubleSpinBox::down-button {
             subcontrol-origin: border;
             subcontrol-position: bottom right;
@@ -83,6 +100,11 @@ def main() -> int:
             border-left: 1px solid #aebbb5;
             background: #eef3ef;
             border-bottom-right-radius: 9px;
+        }
+        QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+            image: url("__SPIN_DOWN_ICON__");
+            width: 10px;
+            height: 10px;
         }
         QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
         QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {
@@ -111,6 +133,31 @@ def main() -> int:
             background: #e6efea;
             color: #203b35;
             font-weight: bold;
+        }
+        QListWidget#RightNav {
+            background: #f8faf8;
+            border: 1px solid #d9e0dc;
+            border-radius: 12px;
+            padding: 6px;
+            outline: 0;
+        }
+        QListWidget#RightNav::item {
+            border-radius: 10px;
+            padding: 11px 9px;
+            margin: 2px 0;
+            color: #263533;
+        }
+        QListWidget#RightNav::item:selected {
+            background: #e5eee9;
+            color: #1d4038;
+            font-weight: 700;
+        }
+        QListWidget#RightNav::item:hover {
+            background: #eef3ef;
+        }
+        QStackedWidget#RightStack {
+            background: transparent;
+            border: none;
         }
         QPushButton {
             background: #f8f9f7;
@@ -157,7 +204,14 @@ def main() -> int:
             color: #00725f;
         }
         """
+    app.setStyleSheet(
+        style.replace("__SPIN_UP_ICON__", spin_up_icon).replace("__SPIN_DOWN_ICON__", spin_down_icon)
     )
+
+
+def main() -> int:
+    app = QApplication(sys.argv)
+    apply_app_style(app)
     window = MainWindow()
     screen = app.primaryScreen().availableGeometry()
     width = min(1800, max(1280, int(screen.width() * 0.92)))

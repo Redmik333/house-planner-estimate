@@ -26,6 +26,8 @@ if (root / "materials.json").exists():
     datas.append((str(root / "materials.json"), "."))
 if (root / "README.md").exists():
     datas.append((str(root / "README.md"), "."))
+if (root / "assets").exists():
+    datas.append((str(root / "assets"), "assets"))
 
 a = Analysis(
     ["main.py"],

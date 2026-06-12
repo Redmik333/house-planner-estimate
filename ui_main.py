@@ -3,7 +3,7 @@ from __future__ import annotations
 from html import escape
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction, QColor, QTextDocument
 from PySide6.QtPrintSupport import QPrinter
@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QInputDialog,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -30,6 +32,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QStackedWidget,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -279,7 +282,7 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(self._menu_button("Конструкции", [("Стена", lambda: self._activate_tool("wall")), ("Крыша", lambda: self._activate_tool("roof")), ("Лестница", lambda: self._activate_tool("stair"))]))
         layout.addWidget(self._menu_button("Планировки", [("Помещение", lambda: self._activate_tool("room")), ("Вписать проект", self._fit_current_project)]))
-        layout.addWidget(self._menu_button("Смета", [("Открыть смету", lambda: self.right_tabs.setCurrentIndex(6)), ("Экспорт TXT", self._export_txt)]))
+        layout.addWidget(self._menu_button("Смета", [("Открыть смету", lambda: self.right_tabs.setCurrentIndex(7)), ("Экспорт TXT", self._export_txt)]))
         layout.addWidget(self._menu_button("Экспорт", [("PDF", self._export_pdf), ("Изображение", self._export_image), ("Коммерческое предложение", self._export_commercial_offer)]))
 
         self.fit_button = QPushButton("Вписать проект в экран")
@@ -435,29 +438,61 @@ class MainWindow(QMainWindow):
 
     def _build_right_panel(self) -> QWidget:
         panel = QFrame()
-        panel.setFixedWidth(470)
+        panel.setFixedWidth(540)
         panel.setFrameShape(QFrame.StyledPanel)
         self._add_soft_shadow(panel)
-        layout = QVBoxLayout(panel)
+        layout = QHBoxLayout(panel)
         layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
 
-        self.right_tabs = QTabWidget()
-        self.right_tabs.addTab(self._scroll_panel(self._build_project_panel()), "Дом")
-        self.right_tabs.addTab(self._scroll_panel(self._build_wall_panel()), "Стены")
-        self.right_tabs.addTab(self._scroll_panel(self._build_roof_panel()), "Крыша")
-        self.right_tabs.addTab(self._scroll_panel(self._build_window_panel()), "Окна")
-        self.right_tabs.addTab(self._scroll_panel(self._build_door_panel()), "Двери")
-        self.right_tabs.addTab(self._scroll_panel(self._build_rooms_panel()), "Помещения")
-        self.right_tabs.addTab(self._scroll_panel(self._build_estimate_box()), "Смета")
-        layout.addWidget(self.right_tabs)
+        self.right_nav = QListWidget()
+        self.right_nav.setObjectName("RightNav")
+        self.right_nav.setFixedWidth(150)
+        self.right_nav.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.right_nav.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.right_nav.setFocusPolicy(Qt.NoFocus)
+
+        self.right_tabs = QStackedWidget()
+        self.right_tabs.setObjectName("RightStack")
+        self.right_tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        sections = [
+            ("🏠 Дом", self._build_project_panel()),
+            ("🧱 Стены", self._build_wall_panel()),
+            ("🏗 Крыша", self._build_roof_panel()),
+            ("🪟 Окна", self._build_window_panel()),
+            ("🚪 Двери", self._build_door_panel()),
+            ("🏠 Помещения", self._build_rooms_panel()),
+            ("🪜 Лестница", self._build_stair_panel()),
+            ("💰 Смета", self._build_estimate_box()),
+        ]
+        for title, widget in sections:
+            item = QListWidgetItem(title)
+            item.setSizeHint(QSize(132, 46))
+            self.right_nav.addItem(item)
+            self.right_tabs.addWidget(self._scroll_panel(widget))
+
+        self.right_nav.currentRowChanged.connect(self.right_tabs.setCurrentIndex)
+        self.right_tabs.currentChanged.connect(self._sync_right_nav)
+        self.right_nav.setCurrentRow(0)
+
+        layout.addWidget(self.right_nav)
+        layout.addWidget(self.right_tabs, stretch=1)
         return panel
+
+    def _sync_right_nav(self, index: int) -> None:
+        if not hasattr(self, "right_nav") or self.right_nav.currentRow() == index:
+            return
+        self.right_nav.blockSignals(True)
+        self.right_nav.setCurrentRow(index)
+        self.right_nav.blockSignals(False)
 
     def _build_project_panel(self) -> QWidget:
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        box = QGroupBox("⌂ Дом")
+        box = QGroupBox("Дом")
         form = QFormLayout(box)
         self._setup_form(form)
 
@@ -494,13 +529,13 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        box = QGroupBox("▰ Крыша")
+        box = QGroupBox("Крыша")
         form = QFormLayout(box)
         self._setup_form(form)
         self.show_roof_check = QCheckBox("Показать крышу на плане")
         self.auto_roof_height_check = QCheckBox("Автоматически рассчитывать конёк")
         self.auto_build_roof_button = QPushButton("Автоматически построить крышу")
-        self.open_roof_view_button = QPushButton("Открыть просмотр крыши")
+        self.open_roof_view_button = QPushButton("Схема крыши")
         self.roof_type_combo = self._section_combo("roof_types")
         self.roof_direction_combo = QComboBox()
         self.roof_direction_combo.addItems(["по X", "по Y"])
@@ -523,10 +558,10 @@ class MainWindow(QMainWindow):
         form.addRow("", self.auto_build_roof_button)
         form.addRow("", self.open_roof_view_button)
 
-        display_box = QGroupBox("◉ Отображение на плане")
+        display_box = QGroupBox("Отображение на плане")
         display_layout = QVBoxLayout(display_box)
         self.show_roof_ridge_check = QCheckBox("Конёк")
-        self.show_roof_slopes_check = QCheckBox("Скаты")
+        self.show_roof_slopes_check = QCheckBox("Направление скатов")
         self.show_roof_overhangs_check = QCheckBox("Свесы")
         self.show_roof_dimensions_check = QCheckBox("Размеры")
         self.show_rooms_check = QCheckBox("Помещения")
@@ -544,7 +579,7 @@ class MainWindow(QMainWindow):
             checkbox.setChecked(True)
             display_layout.addWidget(checkbox)
 
-        summary_box = QGroupBox("▤ Расчёт крыши")
+        summary_box = QGroupBox("Расчёт крыши")
         summary_form = QFormLayout(summary_box)
         self._setup_form(summary_form)
         self.roof_labels: dict[str, QLabel] = {}
@@ -571,7 +606,7 @@ class MainWindow(QMainWindow):
             self.roof_labels[key] = label
             summary_form.addRow(caption, label)
 
-        self.roof_preview = RoofPreviewWidget(self.project)
+        self.roof_preview = None
 
         legend_box = QGroupBox("Легенда")
         legend_layout = QVBoxLayout(legend_box)
@@ -579,20 +614,19 @@ class MainWindow(QMainWindow):
             "Сплошная линия = конёк",
             "Пунктир = свес",
             "Стрелка = направление ската",
-            "Заливка = скат крыши",
+            "Заливка и вальмы = только в режиме Крыша",
         ):
             legend_layout.addWidget(QLabel(text))
 
         layout.addWidget(box)
         layout.addWidget(display_box)
         layout.addWidget(summary_box)
-        layout.addWidget(self.roof_preview)
         layout.addWidget(legend_box)
         layout.addStretch()
         return container
 
     def _build_wall_panel(self) -> QWidget:
-        box = QGroupBox("▌ Стена")
+        box = QGroupBox("Стена")
         form = QFormLayout(box)
         self._setup_form(form)
 
@@ -612,7 +646,7 @@ class MainWindow(QMainWindow):
         return box
 
     def _build_door_panel(self) -> QWidget:
-        box = QGroupBox("▯ Дверь")
+        box = QGroupBox("Дверь")
         form = QFormLayout(box)
         self._setup_form(form)
 
@@ -634,7 +668,7 @@ class MainWindow(QMainWindow):
         return box
 
     def _build_window_panel(self) -> QWidget:
-        box = QGroupBox("▭ Окно")
+        box = QGroupBox("Окно")
         form = QFormLayout(box)
         self._setup_form(form)
 
@@ -664,7 +698,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        room_box = QGroupBox("□ Помещение")
+        room_box = QGroupBox("Помещение")
         room_form = QFormLayout(room_box)
         self._setup_form(room_form)
         self.room_name_combo = QComboBox()
@@ -680,7 +714,20 @@ class MainWindow(QMainWindow):
         room_form.addRow("Площадь", self.room_area_label)
         room_form.addRow("Периметр", self.room_perimeter_label)
 
-        stair_box = QGroupBox("▤ Лестница")
+        hint = QLabel("Помещение ставится кликом внутри замкнутого контура. Подпись и площадь появятся на плане.")
+        hint.setWordWrap(True)
+
+        layout.addWidget(room_box)
+        layout.addWidget(hint)
+        layout.addStretch()
+        return container
+
+    def _build_stair_panel(self) -> QWidget:
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        stair_box = QGroupBox("Лестница")
         stair_form = QFormLayout(stair_box)
         self._setup_form(stair_form)
         self.stair_type_combo = QComboBox()
@@ -700,17 +747,16 @@ class MainWindow(QMainWindow):
         stair_form.addRow("Ступеней", self.stair_steps_spin)
         stair_form.addRow("Цена", self.stair_price_spin)
 
-        hint = QLabel("Помещение ставится кликом внутри контура. Лестница ставится кликом на плане и отображается в разрезе.")
+        hint = QLabel("Настройте лестницу, нажмите инструмент `Лестница` и кликните на плане в месте установки.")
         hint.setWordWrap(True)
 
-        layout.addWidget(room_box)
         layout.addWidget(stair_box)
         layout.addWidget(hint)
         layout.addStretch()
         return container
 
     def _build_estimate_box(self) -> QWidget:
-        box = QGroupBox("₽ Смета")
+        box = QGroupBox("Смета")
         form = QFormLayout(box)
         self._setup_form(form)
         self.labels: dict[str, QLabel] = {}
@@ -842,7 +888,7 @@ class MainWindow(QMainWindow):
         elif tool == "room":
             self.right_tabs.setCurrentIndex(5)
         elif tool == "stair":
-            self.right_tabs.setCurrentIndex(5)
+            self.right_tabs.setCurrentIndex(6)
             self.canvas.set_stair_template(self._current_stair_template())
         elif tool == "roof":
             self.project.show_roof = True
@@ -852,7 +898,7 @@ class MainWindow(QMainWindow):
         self.canvas.set_tool(tool)
         self.roof_mode_box.setVisible(tool == "roof")
         if tool == "roof":
-            self.help_label.setText("Режим крыши: настройте тип, угол, конёк и кровлю справа. На плане подсвечиваются свесы, фронтоны и скаты.")
+            self.help_label.setText("Режим крыши: настройте тип, угол, конёк и кровлю справа. Подробные скаты и фронтоны показываются только в этом режиме.")
         elif tool == "room":
             self.help_label.setText("Кликните внутри контура этажа и выберите назначение помещения. Подпись и площадь появятся на плане.")
         elif tool == "stair":
@@ -1133,7 +1179,7 @@ class MainWindow(QMainWindow):
                 self.room_area_label.setText(f"{room.area:.1f} м²")
                 self.room_perimeter_label.setText(f"{room.perimeter:.1f} м")
             elif kind == "stair" and index >= 0:
-                self.right_tabs.setCurrentIndex(5)
+                self.right_tabs.setCurrentIndex(6)
                 stair = self._active_floor().stairs[index]
                 self.stair_type_combo.setCurrentText(stair.stair_type)
                 self.stair_width_spin.setValue(stair.width)
@@ -1209,7 +1255,7 @@ class MainWindow(QMainWindow):
 
     def _open_roof_view(self) -> None:
         dialog = QDialog(self)
-        dialog.setWindowTitle("Просмотр крыши")
+        dialog.setWindowTitle("Схема крыши")
         dialog.resize(980, 720)
         layout = QVBoxLayout(dialog)
         viewer = RoofPreviewWidget(self.project)
@@ -1471,6 +1517,7 @@ class MainWindow(QMainWindow):
         form.setLabelAlignment(Qt.AlignLeft)
         form.setFormAlignment(Qt.AlignTop)
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        form.setRowWrapPolicy(QFormLayout.WrapAllRows)
         form.setHorizontalSpacing(14)
         form.setVerticalSpacing(10)
 
@@ -1485,6 +1532,7 @@ class MainWindow(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setWidget(widget)
         return scroll
 

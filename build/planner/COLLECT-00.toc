@@ -576,6 +576,13 @@
    'C:\\Program Files (x86)\\Windows Kits\\10\\Windows Performance '
    'Toolkit\\api-ms-win-crt-utility-l1-1-0.dll',
    'BINARY'),
+  ('assets\\spin_down.svg',
+   'C:\\Users\\Dana2\\OneDrive\\Документы\\ПО ДЛЯ '
+   'ЧЕРТЕЖА\\assets\\spin_down.svg',
+   'DATA'),
+  ('assets\\spin_up.svg',
+   'C:\\Users\\Dana2\\OneDrive\\Документы\\ПО ДЛЯ ЧЕРТЕЖА\\assets\\spin_up.svg',
+   'DATA'),
   ('base_library.zip',
    'C:\\Users\\Dana2\\OneDrive\\Документы\\ПО ДЛЯ '
    'ЧЕРТЕЖА\\build\\planner\\base_library.zip',

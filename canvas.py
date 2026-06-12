@@ -88,8 +88,8 @@ class PlanCanvas(QWidget):
             self.update()
             return
 
-        target_w = max(1.0, self.width() * 0.76)
-        target_h = max(1.0, self.height() * 0.76)
+        target_w = max(1.0, self.width() * 0.82)
+        target_h = max(1.0, self.height() * 0.82)
         scale = min(target_w / bounds.width(), target_h / bounds.height())
         self.view_scale = max(0.25, min(5.0, scale))
         center = bounds.center()
@@ -275,7 +275,7 @@ class PlanCanvas(QWidget):
     def wheelEvent(self, event) -> None:  # noqa: N802 - Qt API
         cursor = event.position()
         before = self._screen_to_world(cursor)
-        factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
+        factor = 1.0018 ** event.angleDelta().y()
         self.view_scale = max(0.2, min(6.0, self.view_scale * factor))
         self.view_offset = QPointF(cursor.x() - before.x() * self.view_scale, cursor.y() - before.y() * self.view_scale)
         self.update()
@@ -465,21 +465,25 @@ class PlanCanvas(QWidget):
         if len(roof_points) < 3:
             return
 
-        selected = self.selected_kind == "roof" or self.tool == "roof"
-        outline_width = 4 if selected else 2
-        ridge_width = 6 if selected else 4
+        detail_mode = self.tool == "roof" or self.selected_kind == "roof"
+        outline_width = 4 if detail_mode else 2
+        ridge_width = 6 if detail_mode else 4
         polygon = QPolygonF(roof_points)
-        if self.project.show_roof_overhangs or selected:
-            painter.setPen(QPen(QColor(118, 83, 41, 230), outline_width, Qt.DashLine))
-            painter.setBrush(QBrush(QColor(184, 125, 63, 70 if selected else 45) if (self.project.show_roof_slopes or selected) else Qt.transparent))
-            painter.drawPolygon(polygon)
-        elif self.project.show_roof_slopes:
-            painter.setPen(QPen(QColor(118, 83, 41, 150), 1))
-            painter.setBrush(QBrush(QColor(184, 125, 63, 60 if selected else 38)))
+
+        # В обычном плане крыша не перекрывает помещения: видны только свес,
+        # конёк, стрелки и размеры. Заливка включается только в режиме "Крыша".
+        if detail_mode and self.project.show_roof_slopes:
+            painter.setPen(QPen(QColor(118, 83, 41, 210), 1))
+            painter.setBrush(QBrush(QColor(184, 125, 63, 58)))
             painter.drawPolygon(polygon)
 
-        # Внутренний контур показывает стены, внешний пунктир - свес крыши.
-        if self.project.show_roof_overhangs:
+        if self.project.show_roof_overhangs or detail_mode:
+            painter.setPen(QPen(QColor(118, 83, 41, 230), outline_width, Qt.DashLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPolygon(polygon)
+
+        if detail_mode and self.project.show_roof_overhangs:
+            # Внутренний контур помогает сравнить стены и свес только в режиме крыши.
             painter.setBrush(Qt.NoBrush)
             painter.setPen(QPen(QColor("#5f6f78"), 1, Qt.DotLine))
             painter.drawPolygon(QPolygonF(base_points))
@@ -508,12 +512,14 @@ class PlanCanvas(QWidget):
                 if self.project.show_roof_dimensions:
                     self._draw_roof_ridge_labels(painter, ridge_start, ridge_end)
             if self.project.show_roof_slopes:
-                self._draw_gables(painter, left, right, top, bottom)
                 self._draw_slope_arrows(painter, ridge_start, ridge_end, left, right, top, bottom)
+            if detail_mode:
+                self._draw_gables(painter, left, right, top, bottom)
             if roof_type == "Мансардная":
-                painter.setPen(QPen(QColor(136, 76, 28, 150), 1, Qt.DashLine))
-                painter.drawLine(QPointF(left + 18, center_y - 18), QPointF(right - 18, center_y - 18))
-                painter.drawLine(QPointF(left + 18, center_y + 18), QPointF(right - 18, center_y + 18))
+                if detail_mode:
+                    painter.setPen(QPen(QColor(136, 76, 28, 150), 1, Qt.DashLine))
+                    painter.drawLine(QPointF(left + 18, center_y - 18), QPointF(right - 18, center_y - 18))
+                    painter.drawLine(QPointF(left + 18, center_y + 18), QPointF(right - 18, center_y + 18))
         elif roof_type == "Односкатная":
             if self.project.roof_ridge_direction == "по Y":
                 start = QPointF(left + 18, center_y)
@@ -538,18 +544,30 @@ class PlanCanvas(QWidget):
                 ridge_start, ridge_end = ridge_a, ridge_b
                 if self.project.show_roof_ridge:
                     painter.drawLine(ridge_a, ridge_b)
-                    if self.project.show_roof_dimensions:
-                        self._draw_roof_ridge_labels(painter, ridge_a, ridge_b)
+                if self.project.show_roof_dimensions:
+                    self._draw_roof_ridge_labels(painter, ridge_a, ridge_b)
                 targets = (ridge_a, ridge_b)
             else:
                 targets = (QPointF(center_x, center_y),)
-                if self.project.show_roof_dimensions:
+                if detail_mode and self.project.show_roof_dimensions:
                     self._label_box(painter, QPointF(center_x + 10, center_y - 28), f"конёк {self.project.roof_ridge_height:.1f} м")
             if self.project.show_roof_slopes:
+                painter.setPen(QPen(QColor("#8d5a2d"), 2, Qt.SolidLine, Qt.RoundCap))
                 for corner in (QPointF(left, top), QPointF(right, top), QPointF(right, bottom), QPointF(left, bottom)):
                     target = min(targets, key=lambda item: self._distance(corner, item))
-                    painter.drawLine(corner, target)
-                    self._draw_arrow(painter, target, corner)
+                    if detail_mode:
+                        painter.drawLine(corner, target)
+                        self._draw_arrow(painter, target, corner)
+                    else:
+                        start = QPointF(
+                            target.x() + (corner.x() - target.x()) * 0.38,
+                            target.y() + (corner.y() - target.y()) * 0.38,
+                        )
+                        end = QPointF(
+                            target.x() + (corner.x() - target.x()) * 0.58,
+                            target.y() + (corner.y() - target.y()) * 0.58,
+                        )
+                        self._draw_arrow(painter, start, end)
 
         if self.project.show_roof_overhangs and self.project.show_roof_dimensions:
             self._draw_overhang_labels(painter, base_points, roof_points)
@@ -843,7 +861,7 @@ class PlanCanvas(QWidget):
         right = max(point.x() for point in points)
         top = min(point.y() for point in points)
         bottom = max(point.y() for point in points)
-        padding = 80
+        padding = 45
         return QRectF(left - padding, top - padding, max(1.0, right - left + padding * 2), max(1.0, bottom - top + padding * 2))
 
 
@@ -868,7 +886,7 @@ class RoofPreviewWidget(QWidget):
 
         if not self.project.get_floor(1).walls:
             painter.setPen(QColor("#6b7872"))
-            painter.drawText(self.rect(), Qt.AlignCenter, "3D-просмотр крыши появится после стен")
+            painter.drawText(self.rect(), Qt.AlignCenter, "Схема крыши появится после стен")
             return
 
         width_m, depth_m = self.project.footprint_bounds_m()
@@ -925,7 +943,7 @@ class RoofPreviewWidget(QWidget):
 
         painter.setPen(QColor("#31413a"))
         painter.setFont(QFont("Arial", 9))
-        painter.drawText(12, 22, f"3D: {self.project.roof_type}, {self.project.roof_ridge_direction}")
+        painter.drawText(12, 22, f"Схема: {self.project.roof_type}, {self.project.roof_ridge_direction}")
         painter.drawText(12, 42, "ЛКМ - вращение, колесо - масштаб")
 
     def _draw_face(self, painter: QPainter, points: list[QPointF], color: QColor) -> None:
