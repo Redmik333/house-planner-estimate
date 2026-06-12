@@ -1,0 +1,440 @@
+{
+  "wall_materials": {
+    "Газоблок 200 мм": {
+      "name": "Газоблок 200 мм",
+      "thickness_m": 0.2,
+      "price_per_m2": 2500,
+      "price_per_m3": 12500,
+      "thermal_conductivity": 0.12,
+      "weight_per_m2": 95,
+      "category": "газоблок"
+    },
+    "Газоблок 250 мм": {
+      "name": "Газоблок 250 мм",
+      "thickness_m": 0.25,
+      "price_per_m2": 2850,
+      "price_per_m3": 11400,
+      "thermal_conductivity": 0.12,
+      "weight_per_m2": 115,
+      "category": "газоблок"
+    },
+    "Газоблок 300 мм": {
+      "name": "Газоблок 300 мм",
+      "thickness_m": 0.3,
+      "price_per_m2": 3200,
+      "price_per_m3": 10650,
+      "thermal_conductivity": 0.12,
+      "weight_per_m2": 135,
+      "category": "газоблок"
+    },
+    "Газоблок 375 мм": {
+      "name": "Газоблок 375 мм",
+      "thickness_m": 0.375,
+      "price_per_m2": 3950,
+      "price_per_m3": 10500,
+      "thermal_conductivity": 0.11,
+      "weight_per_m2": 165,
+      "category": "газоблок"
+    },
+    "Газоблок 400 мм": {
+      "name": "Газоблок 400 мм",
+      "thickness_m": 0.4,
+      "price_per_m2": 4200,
+      "price_per_m3": 10500,
+      "thermal_conductivity": 0.11,
+      "weight_per_m2": 175,
+      "category": "газоблок"
+    },
+    "Каркас 150 мм": {
+      "name": "Каркас 150 мм",
+      "thickness_m": 0.15,
+      "price_per_m2": 2400,
+      "price_per_m3": 16000,
+      "thermal_conductivity": 0.04,
+      "weight_per_m2": 55,
+      "category": "каркас"
+    }
+  },
+  "brick_types": {
+    "Кирпич керамический рядовой": {
+      "name": "Кирпич керамический рядовой",
+      "price_per_m2": 5200,
+      "price_per_piece": 18,
+      "pieces_per_m2": 102,
+      "weight": 3.5,
+      "thickness_m": 0.38,
+      "category": "кирпич"
+    },
+    "Кирпич облицовочный": {
+      "name": "Кирпич облицовочный",
+      "price_per_m2": 6900,
+      "price_per_piece": 32,
+      "pieces_per_m2": 52,
+      "weight": 2.4,
+      "thickness_m": 0.12,
+      "category": "кирпич"
+    },
+    "Кирпич силикатный": {
+      "name": "Кирпич силикатный",
+      "price_per_m2": 4700,
+      "price_per_piece": 16,
+      "pieces_per_m2": 102,
+      "weight": 3.7,
+      "thickness_m": 0.38,
+      "category": "кирпич"
+    },
+    "Кирпич клинкерный": {
+      "name": "Кирпич клинкерный",
+      "price_per_m2": 9200,
+      "price_per_piece": 55,
+      "pieces_per_m2": 52,
+      "weight": 3.0,
+      "thickness_m": 0.12,
+      "category": "кирпич"
+    },
+    "Кирпич полнотелый": {
+      "name": "Кирпич полнотелый",
+      "price_per_m2": 6100,
+      "price_per_piece": 24,
+      "pieces_per_m2": 102,
+      "weight": 4.0,
+      "thickness_m": 0.38,
+      "category": "кирпич"
+    },
+    "Кирпич пустотелый": {
+      "name": "Кирпич пустотелый",
+      "price_per_m2": 5600,
+      "price_per_piece": 21,
+      "pieces_per_m2": 102,
+      "weight": 2.8,
+      "thickness_m": 0.38,
+      "category": "кирпич"
+    }
+  },
+  "block_types": {
+    "Пеноблок": {
+      "name": "Пеноблок",
+      "thickness_m": 0.3,
+      "price_per_m2": 2800,
+      "price_per_m3": 9300,
+      "thermal_conductivity": 0.16,
+      "weight_per_m2": 125,
+      "category": "блок"
+    },
+    "Керамзитоблок": {
+      "name": "Керамзитоблок",
+      "thickness_m": 0.3,
+      "price_per_m2": 3100,
+      "price_per_m3": 10300,
+      "thermal_conductivity": 0.22,
+      "weight_per_m2": 180,
+      "category": "блок"
+    },
+    "Арболит": {
+      "name": "Арболит",
+      "thickness_m": 0.3,
+      "price_per_m2": 3600,
+      "price_per_m3": 12000,
+      "thermal_conductivity": 0.09,
+      "weight_per_m2": 150,
+      "category": "блок"
+    },
+    "Теплоблок": {
+      "name": "Теплоблок",
+      "thickness_m": 0.4,
+      "price_per_m2": 5200,
+      "price_per_m3": 13000,
+      "thermal_conductivity": 0.08,
+      "weight_per_m2": 210,
+      "category": "блок"
+    },
+    "Шлакоблок": {
+      "name": "Шлакоблок",
+      "thickness_m": 0.3,
+      "price_per_m2": 2400,
+      "price_per_m3": 8000,
+      "thermal_conductivity": 0.28,
+      "weight_per_m2": 190,
+      "category": "блок"
+    }
+  },
+  "roof_types": {
+    "Плоская": {
+      "area_factor": 1.0,
+      "complexity_factor": 1.0,
+      "can_edit_ridge_height": false,
+      "can_edit_angle": false,
+      "needs_ridge_line": false
+    },
+    "Односкатная": {
+      "area_factor": 1.15,
+      "complexity_factor": 1.05,
+      "can_edit_ridge_height": true,
+      "can_edit_angle": true,
+      "needs_ridge_line": false
+    },
+    "Двускатная": {
+      "area_factor": 1.25,
+      "complexity_factor": 1.1,
+      "can_edit_ridge_height": true,
+      "can_edit_angle": true,
+      "needs_ridge_line": true
+    },
+    "Вальмовая": {
+      "area_factor": 1.35,
+      "complexity_factor": 1.22,
+      "can_edit_ridge_height": true,
+      "can_edit_angle": true,
+      "needs_ridge_line": true
+    },
+    "Полувальмовая": {
+      "area_factor": 1.32,
+      "complexity_factor": 1.28,
+      "can_edit_ridge_height": true,
+      "can_edit_angle": true,
+      "needs_ridge_line": true
+    },
+    "Мансардная": {
+      "area_factor": 1.55,
+      "complexity_factor": 1.45,
+      "can_edit_ridge_height": true,
+      "can_edit_angle": true,
+      "needs_ridge_line": true
+    },
+    "Шатровая": {
+      "area_factor": 1.4,
+      "complexity_factor": 1.35,
+      "can_edit_ridge_height": true,
+      "can_edit_angle": true,
+      "needs_ridge_line": false
+    }
+  },
+  "roofing_materials": {
+    "Металлочерепица": {
+      "price_per_m2": 2600,
+      "weight_per_m2": 5,
+      "waste_factor": 1.1,
+      "service_life_years": 30,
+      "installation_complexity": 1.0
+    },
+    "Профлист": {
+      "price_per_m2": 1900,
+      "weight_per_m2": 4.5,
+      "waste_factor": 1.08,
+      "service_life_years": 25,
+      "installation_complexity": 0.9
+    },
+    "Мягкая кровля": {
+      "price_per_m2": 3100,
+      "weight_per_m2": 9,
+      "waste_factor": 1.12,
+      "service_life_years": 35,
+      "installation_complexity": 1.1
+    },
+    "Фальцевая кровля": {
+      "price_per_m2": 4300,
+      "weight_per_m2": 6,
+      "waste_factor": 1.12,
+      "service_life_years": 45,
+      "installation_complexity": 1.25
+    },
+    "Керамическая черепица": {
+      "price_per_m2": 6200,
+      "weight_per_m2": 42,
+      "waste_factor": 1.14,
+      "service_life_years": 70,
+      "installation_complexity": 1.45
+    },
+    "Цементно-песчаная черепица": {
+      "price_per_m2": 4700,
+      "weight_per_m2": 38,
+      "waste_factor": 1.14,
+      "service_life_years": 50,
+      "installation_complexity": 1.35
+    },
+    "Ондулин": {
+      "price_per_m2": 1600,
+      "weight_per_m2": 3.5,
+      "waste_factor": 1.1,
+      "service_life_years": 15,
+      "installation_complexity": 0.85
+    }
+  },
+  "foundation_types": {
+    "Плита": {
+      "price_per_m2": 8500,
+      "complexity_factor": 1.15
+    },
+    "Лента": {
+      "price_per_m2": 6200,
+      "complexity_factor": 1.0
+    },
+    "Сваи": {
+      "price_per_m2": 3800,
+      "complexity_factor": 0.85
+    }
+  },
+  "insulation_types": {
+    "Без утепления": {
+      "price_per_m2": 0,
+      "thermal_conductivity": 0,
+      "thickness_m": 0
+    },
+    "Минеральная вата 100 мм": {
+      "price_per_m2": 950,
+      "thermal_conductivity": 0.04,
+      "thickness_m": 0.1
+    },
+    "Минеральная вата 150 мм": {
+      "price_per_m2": 1350,
+      "thermal_conductivity": 0.04,
+      "thickness_m": 0.15
+    },
+    "Пенополистирол 100 мм": {
+      "price_per_m2": 1100,
+      "thermal_conductivity": 0.036,
+      "thickness_m": 0.1
+    }
+  },
+  "facade_finish": {
+    "Без отделки": {
+      "price_per_m2": 0,
+      "complexity_factor": 1.0
+    },
+    "Черновая": {
+      "price_per_m2": 9000,
+      "complexity_factor": 1.0
+    },
+    "Чистовая": {
+      "price_per_m2": 18000,
+      "complexity_factor": 1.0
+    },
+    "Штукатурка": {
+      "price_per_m2": 2200,
+      "complexity_factor": 1.05
+    },
+    "Сайдинг": {
+      "price_per_m2": 1800,
+      "complexity_factor": 0.95
+    },
+    "Фасадные панели": {
+      "price_per_m2": 3200,
+      "complexity_factor": 1.12
+    },
+    "Облицовочный кирпич": {
+      "price_per_m2": 6900,
+      "complexity_factor": 1.25
+    }
+  },
+  "window_templates": {
+    "Маленькое окно 0.6 x 0.6 м": {
+      "width": 0.6,
+      "height": 0.6,
+      "sill_height": 1.2,
+      "glass_type": "двухкамерный",
+      "price": 9500,
+      "price_per_m2": 0
+    },
+    "Окно котельной 0.8 x 0.8 м": {
+      "width": 0.8,
+      "height": 0.8,
+      "sill_height": 1.2,
+      "glass_type": "двухкамерный",
+      "price": 12500,
+      "price_per_m2": 0
+    },
+    "Стандартное окно 1.5 x 1.4 м": {
+      "width": 1.5,
+      "height": 1.4,
+      "sill_height": 0.9,
+      "glass_type": "двухкамерный",
+      "price": 24000,
+      "price_per_m2": 0
+    },
+    "Большое окно 2.0 x 1.5 м": {
+      "width": 2.0,
+      "height": 1.5,
+      "sill_height": 0.8,
+      "glass_type": "двухкамерный",
+      "price": 36000,
+      "price_per_m2": 0
+    },
+    "Панорамное окно 2.4 x 2.0 м": {
+      "width": 2.4,
+      "height": 2.0,
+      "sill_height": 0.2,
+      "glass_type": "энергосберегающий",
+      "price": 64000,
+      "price_per_m2": 0
+    },
+    "Террасное окно/портал 3.0 x 2.2 м": {
+      "width": 3.0,
+      "height": 2.2,
+      "sill_height": 0.0,
+      "glass_type": "энергосберегающий",
+      "price": 98000,
+      "price_per_m2": 0
+    },
+    "Свой размер": {
+      "width": 1.2,
+      "height": 1.4,
+      "sill_height": 0.9,
+      "glass_type": "двухкамерный",
+      "price": 0,
+      "price_per_m2": 14500,
+      "custom": true
+    }
+  },
+  "door_templates": {
+    "Межкомнатная 0.8 x 2.0 м": {
+      "width": 0.8,
+      "height": 2.0,
+      "price": 18000,
+      "opening_direction": "Внутрь",
+      "hinge_side": "Левая"
+    },
+    "Входная 0.9 x 2.1 м": {
+      "width": 0.9,
+      "height": 2.1,
+      "price": 42000,
+      "opening_direction": "Наружу",
+      "hinge_side": "Левая"
+    },
+    "Широкая входная 1.2 x 2.1 м": {
+      "width": 1.2,
+      "height": 2.1,
+      "price": 62000,
+      "opening_direction": "Наружу",
+      "hinge_side": "Правая"
+    },
+    "Техническая 0.8 x 2.0 м": {
+      "width": 0.8,
+      "height": 2.0,
+      "price": 28000,
+      "opening_direction": "Наружу",
+      "hinge_side": "Левая"
+    },
+    "Террасная дверь 1.5 x 2.2 м": {
+      "width": 1.5,
+      "height": 2.2,
+      "price": 78000,
+      "opening_direction": "Наружу",
+      "hinge_side": "Правая"
+    },
+    "Портал 3.0 x 2.2 м": {
+      "width": 3.0,
+      "height": 2.2,
+      "price": 145000,
+      "opening_direction": "Наружу",
+      "hinge_side": "Левая"
+    },
+    "Свой размер": {
+      "width": 0.9,
+      "height": 2.1,
+      "price": 0,
+      "opening_direction": "Внутрь",
+      "hinge_side": "Левая",
+      "custom": true
+    }
+  }
+}

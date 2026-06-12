@@ -22,6 +22,8 @@ class PlanCanvas(QWidget):
         self.selected_index = -1
         self.hover_wall = -1
         self.hover_ratio = 0.5
+        self.door_template: dict[str, object] = {}
+        self.window_template: dict[str, object] = {}
         self._draft_start: QPointF | None = None
         self._draft_end: QPointF | None = None
         self._last_mouse_pos: QPointF | None = None
@@ -44,6 +46,12 @@ class PlanCanvas(QWidget):
             self._select("project", -1)
             self.project_changed.emit()
         self.update()
+
+    def set_door_template(self, template: dict[str, object]) -> None:
+        self.door_template = dict(template)
+
+    def set_window_template(self, template: dict[str, object]) -> None:
+        self.window_template = dict(template)
 
     def delete_selected_element(self) -> None:
         if self.selected_kind == "wall" and self.selected_index >= 0:
@@ -105,14 +113,14 @@ class PlanCanvas(QWidget):
         elif self.tool == "door":
             index, ratio = self._wall_at(pos)
             if index >= 0:
-                self.project.doors.append(DoorItem(index, ratio))
+                self.project.doors.append(self._door_from_template(index, ratio))
                 self._select("door", len(self.project.doors) - 1)
                 self.project_changed.emit()
                 self.update()
         elif self.tool == "window":
             index, ratio = self._wall_at(pos)
             if index >= 0:
-                self.project.windows.append(WindowItem(index, ratio))
+                self.project.windows.append(self._window_from_template(index, ratio))
                 self._select("window", len(self.project.windows) - 1)
                 self.project_changed.emit()
                 self.update()
@@ -305,11 +313,15 @@ class PlanCanvas(QWidget):
         center_y = (top + bottom) / 2
         painter.setPen(QPen(QColor(136, 76, 28, 210), 2))
 
-        if roof_type == "Двускатная":
+        if roof_type in ("Двускатная", "Полувальмовая", "Мансардная"):
             if self.project.roof_ridge_direction == "по Y":
                 painter.drawLine(QPointF(center_x, top + 12), QPointF(center_x, bottom - 12))
             else:
                 painter.drawLine(QPointF(left + 12, center_y), QPointF(right - 12, center_y))
+            if roof_type == "Мансардная":
+                painter.setPen(QPen(QColor(136, 76, 28, 150), 1, Qt.DashLine))
+                painter.drawLine(QPointF(left + 18, center_y - 18), QPointF(right - 18, center_y - 18))
+                painter.drawLine(QPointF(left + 18, center_y + 18), QPointF(right - 18, center_y + 18))
         elif roof_type == "Односкатная":
             if self.project.roof_ridge_direction == "по Y":
                 start = QPointF(left + 18, center_y)
@@ -320,16 +332,20 @@ class PlanCanvas(QWidget):
             painter.drawLine(start, end)
             painter.drawLine(end, QPointF(end.x() - 18, end.y() + 2))
             painter.drawLine(end, QPointF(end.x() - 4, end.y() + 18))
-        elif roof_type == "Вальмовая":
+        elif roof_type in ("Вальмовая", "Шатровая"):
             if self.project.roof_ridge_direction == "по Y":
                 ridge_a = QPointF(center_x, top + 22)
                 ridge_b = QPointF(center_x, bottom - 22)
             else:
                 ridge_a = QPointF(left + 22, center_y)
                 ridge_b = QPointF(right - 22, center_y)
-            painter.drawLine(ridge_a, ridge_b)
+            if roof_type == "Вальмовая":
+                painter.drawLine(ridge_a, ridge_b)
+                targets = (ridge_a, ridge_b)
+            else:
+                targets = (QPointF(center_x, center_y),)
             for corner in (QPointF(left, top), QPointF(right, top), QPointF(right, bottom), QPointF(left, bottom)):
-                target = ridge_a if self._distance(corner, ridge_a) < self._distance(corner, ridge_b) else ridge_b
+                target = min(targets, key=lambda item: self._distance(corner, item))
                 painter.drawLine(corner, target)
 
     def _draw_hover_preview(self, painter: QPainter) -> None:
@@ -337,11 +353,41 @@ class PlanCanvas(QWidget):
             return
         wall = self.project.walls[self.hover_wall]
         if self.tool == "door":
-            preview = DoorItem(self.hover_wall, self.hover_ratio)
+            preview = self._door_from_template(self.hover_wall, self.hover_ratio)
             self._draw_door_symbol(painter, wall, preview, True)
         else:
-            preview = WindowItem(self.hover_wall, self.hover_ratio)
+            preview = self._window_from_template(self.hover_wall, self.hover_ratio)
             self._draw_window_symbol(painter, wall, preview, True)
+
+    def _door_from_template(self, wall_index: int, ratio: float) -> DoorItem:
+        wall = self.project.walls[wall_index]
+        return DoorItem(
+            wall_index=wall_index,
+            position=ratio,
+            width=float(self.door_template.get("width", 0.9) or 0.9),
+            height=float(self.door_template.get("height", 2.1) or 2.1),
+            opening_direction=str(self.door_template.get("opening_direction", "Внутрь")),
+            hinge_side=str(self.door_template.get("hinge_side", "Левая")),
+            price=float(self.door_template.get("price", 28000) or 0),
+            template_name=str(self.door_template.get("template_name", "Свой размер")),
+            distance_from_start=ratio * wall.length_m,
+        )
+
+    def _window_from_template(self, wall_index: int, ratio: float) -> WindowItem:
+        wall = self.project.walls[wall_index]
+        return WindowItem(
+            wall_index=wall_index,
+            position=ratio,
+            width=float(self.window_template.get("width", 1.2) or 1.2),
+            height=float(self.window_template.get("height", 1.4) or 1.4),
+            install_height=float(self.window_template.get("sill_height", self.window_template.get("install_height", 0.9)) or 0.9),
+            glass_type=str(self.window_template.get("glass_type", "двухкамерный")),
+            price=float(self.window_template.get("price", 18000) or 0),
+            price_per_m2=float(self.window_template.get("price_per_m2", 0) or 0),
+            template_name=str(self.window_template.get("template_name", "Свой размер")),
+            distance_from_start=ratio * wall.length_m,
+            count=1,
+        )
 
     def _draw_hint(self, painter: QPainter) -> None:
         painter.setPen(QColor("#5f6f78"))
@@ -514,7 +560,7 @@ class RoofPreviewWidget(QWidget):
             else:
                 pts = [iso(x0, y0, h), iso(x1, y0, h), iso(x1, y1, 0), iso(x0, y1, 0)]
             self._draw_face(painter, pts, QColor(184, 125, 63, 175))
-        elif self.project.roof_type == "Двускатная":
+        elif self.project.roof_type in ("Двускатная", "Полувальмовая", "Мансардная"):
             if self.project.roof_ridge_direction == "по Y":
                 ridge_a, ridge_b = iso(0, y0, h), iso(0, y1, h)
                 self._draw_face(painter, [iso(x0, y0), ridge_a, ridge_b, iso(x0, y1)], QColor(184, 125, 63, 180))

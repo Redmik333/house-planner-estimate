@@ -9,124 +9,165 @@ from typing import Any
 from models import Project
 
 
+WALL_SECTIONS = ("wall_materials", "brick_types", "block_types")
+
+
 def app_base_path() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
 
 
-DEFAULT_PRICES_PATH = app_base_path() / "prices.json"
-
-DEFAULT_PRICES: dict[str, Any] = {
-    "wall_materials": {
-        "Газоблок": 3200,
-        "Кирпич": 5200,
-        "Пеноблок": 2800,
-        "Каркас": 2400,
-    },
-    "foundation": {
-        "Плита": 8500,
-        "Лента": 6200,
-        "Сваи": 3800,
-    },
-    "roof_type_multiplier": {
-        "Плоская": 1.0,
-        "Односкатная": 1.15,
-        "Двускатная": 1.25,
-        "Вальмовая": 1.35,
-    },
-    "roofing": {
-        "Металлочерепица": 2600,
-        "Профлист": 1900,
-        "Мягкая кровля": 3100,
-    },
-    "doors": {
-        "Базовая дверь": 28000,
-    },
-    "windows": {
-        "Базовое окно": 18000,
-    },
-    "finishing": {
-        "Без отделки": 0,
-        "Черновая": 9000,
-        "Чистовая": 18000,
-    },
-}
+DEFAULT_MATERIALS_PATH = app_base_path() / "materials.json"
 
 
-def load_prices(path: Path = DEFAULT_PRICES_PATH) -> dict[str, Any]:
+def load_materials(path: Path = DEFAULT_MATERIALS_PATH) -> dict[str, Any]:
+    """Читает каталог материалов из JSON и создаёт минимальный файл, если его нет."""
     if not path.exists():
-        save_prices(DEFAULT_PRICES, path)
-        return DEFAULT_PRICES.copy()
+        materials = _fallback_materials()
+        save_materials(materials, path)
+        return materials
 
     with path.open("r", encoding="utf-8") as file:
         loaded = json.load(file)
 
-    prices = _merge_defaults(DEFAULT_PRICES, loaded)
-
-    # Поддержка старого файла prices.json, где двери и окна лежали в openings.
-    openings = loaded.get("openings", {})
-    if "doors" not in loaded and "Дверь" in openings:
-        prices["doors"]["Базовая дверь"] = openings["Дверь"]
-    if "windows" not in loaded and "Окно" in openings:
-        prices["windows"]["Базовое окно"] = openings["Окно"]
-
-    if prices != loaded:
-        save_prices(prices, path)
-    return prices
+    materials = _merge_defaults(_fallback_materials(), loaded)
+    if materials != loaded:
+        save_materials(materials, path)
+    return materials
 
 
-def save_prices(prices: dict[str, Any], path: Path = DEFAULT_PRICES_PATH) -> None:
+def load_prices(path: Path = DEFAULT_MATERIALS_PATH) -> dict[str, Any]:
+    """Старое имя оставлено, чтобы не ломать импорт в старых сборках."""
+    return load_materials(path)
+
+
+def save_materials(materials: dict[str, Any], path: Path = DEFAULT_MATERIALS_PATH) -> None:
     with path.open("w", encoding="utf-8") as file:
-        json.dump(prices, file, ensure_ascii=False, indent=2)
+        json.dump(materials, file, ensure_ascii=False, indent=2)
 
 
-def calculate_estimate(project: Project, prices: dict[str, Any]) -> dict[str, float]:
+def wall_catalog(materials: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for section in WALL_SECTIONS:
+        values = materials.get(section, {})
+        if isinstance(values, dict):
+            result.update(values)
+    return result
+
+
+def wall_material_info(materials: dict[str, Any], name: str) -> dict[str, Any]:
+    aliases = {
+        "Газоблок": "Газоблок 300 мм",
+        "Кирпич": "Кирпич керамический рядовой",
+        "Каркас": "Каркас 150 мм",
+    }
+    return wall_catalog(materials).get(name) or wall_catalog(materials).get(aliases.get(name, name), {})
+
+
+def material_price_label(name: str, data: dict[str, Any], price_key: str = "price_per_m2") -> str:
+    price = float(data.get(price_key, 0) or 0)
+    return f"{name} — {format_money(price)}/м²" if price else name
+
+
+def section_item(materials: dict[str, Any], section: str, name: str) -> dict[str, Any]:
+    return dict(materials.get(section, {}).get(name, {}))
+
+
+def calculate_estimate(project: Project, materials: dict[str, Any]) -> dict[str, float]:
+    project.update_auto_roof_height()
+
     length = project.total_wall_length_m()
     wall_area = project.wall_area_m2()
+    footprint_area = project.footprint_area_m2()
     house_area = project.approximate_house_area_m2()
 
     walls_cost = 0.0
+    weighted_thickness = 0.0
     for wall in project.walls:
-        rate = wall.price_per_m2 or prices["wall_materials"].get(wall.material, 0)
-        walls_cost += wall.area_m2() * rate * project.floors
+        info = wall_material_info(materials, wall.material)
+        default_thickness = float(info.get("thickness_m", wall.thickness) or wall.thickness or 0.3)
+        price_per_m3 = float(info.get("price_per_m3", 0) or 0)
+        price_per_m2 = float(info.get("price_per_m2", 0) or 0)
+        has_manual_rate = wall.price_per_m2 > 0 and abs(wall.price_per_m2 - price_per_m2) > 1
+        if has_manual_rate:
+            rate = wall.price_per_m2
+        elif price_per_m3 > 0:
+            rate = price_per_m3 * wall.thickness
+        elif default_thickness > 0 and wall.thickness > 0:
+            rate = price_per_m2 * (wall.thickness / default_thickness)
+        else:
+            rate = price_per_m2
+        wall_area_item = wall.area_m2() * project.wall_storey_multiplier()
+        walls_cost += wall_area_item * rate
+        weighted_thickness += wall.length_m * wall.thickness
 
-    foundation_rate = prices["foundation"].get(project.foundation_type, 0)
-    roofing_rate = prices["roofing"].get(project.roofing, 0)
-    roof_multiplier = prices["roof_type_multiplier"].get(project.roof_type, 1.25)
-    finishing_rate = prices["finishing"].get(project.finishing, 0)
+    avg_thickness = weighted_thickness / length if length > 0 else 0.0
 
-    door_price = prices["doors"].get("Базовая дверь", 0)
-    window_price = prices["windows"].get("Базовое окно", 0)
-    openings_cost = len(project.doors) * door_price
-    openings_cost += sum(max(1, window.count) * window_price for window in project.windows)
+    foundation = section_item(materials, "foundation_types", project.foundation_type)
+    foundation_rate = float(foundation.get("price_per_m2", 0) or 0)
+    foundation_factor = float(foundation.get("complexity_factor", 1) or 1)
+    foundation_cost = footprint_area * foundation_rate * foundation_factor
 
-    foundation_cost = house_area * foundation_rate / max(project.floors, 1)
-    footprint_width, footprint_height = project.footprint_bounds_m()
-    if footprint_width <= 0 or footprint_height <= 0:
-        roof_base_area = 0.0
-    else:
-        roof_base_area = (footprint_width + project.roof_overhang * 2) * (footprint_height + project.roof_overhang * 2)
-    angle = max(1.0, min(60.0, project.roof_angle))
-    angle_multiplier = 1.0 if project.roof_type == "Плоская" else 1 / max(0.35, cos(radians(angle)))
-    roof_area = roof_base_area * roof_multiplier * angle_multiplier
-    roof_cost = roof_area * roofing_rate * project.roof_complexity
-    finishing_cost = house_area * finishing_rate
+    roof_area = calculate_roof_area(project, materials)
+    roofing = section_item(materials, "roofing_materials", project.roofing)
+    roof_type = section_item(materials, "roof_types", project.roof_type)
+    roofing_rate = float(roofing.get("price_per_m2", 0) or 0)
+    waste_factor = float(roofing.get("waste_factor", 1) or 1)
+    install_factor = float(roofing.get("installation_complexity", 1) or 1)
+    roof_type_factor = float(roof_type.get("complexity_factor", 1) or 1)
+    roof_cost = roof_area * roofing_rate * waste_factor * install_factor * roof_type_factor * project.roof_complexity
 
-    total = walls_cost + foundation_cost + roof_cost + openings_cost + finishing_cost
+    windows_cost = sum(_window_price(window, materials) * max(1, window.count) for window in project.windows)
+    doors_cost = sum(_door_price(door, materials) for door in project.doors)
+    openings_cost = windows_cost + doors_cost
+
+    insulation = section_item(materials, "insulation_types", project.insulation_type)
+    insulation_cost = wall_area * float(insulation.get("price_per_m2", 0) or 0)
+
+    facade = section_item(materials, "facade_finish", project.facade_finish or project.finishing)
+    facade_cost = wall_area * float(facade.get("price_per_m2", 0) or 0) * float(facade.get("complexity_factor", 1) or 1)
+    finishing_cost = facade_cost
+
+    floor_factor = _floor_complexity_factor(project)
+    subtotal = walls_cost + foundation_cost + roof_cost + openings_cost + insulation_cost + facade_cost
+    complexity_extra = subtotal * (floor_factor - 1)
+    total = subtotal + complexity_extra
 
     return {
         "house_area": house_area,
+        "footprint_area": footprint_area,
         "wall_length": length,
         "wall_area": wall_area,
+        "wall_thickness": avg_thickness,
+        "total_wall_height": project.total_wall_height_m(),
         "walls_cost": walls_cost,
         "foundation_cost": foundation_cost,
         "roof_cost": roof_cost,
         "roof_area": roof_area,
+        "windows_cost": windows_cost,
+        "doors_cost": doors_cost,
         "openings_cost": openings_cost,
+        "insulation_cost": insulation_cost,
+        "facade_cost": facade_cost,
         "finishing_cost": finishing_cost,
+        "floor_complexity_factor": floor_factor,
+        "complexity_extra": complexity_extra,
         "total": total,
     }
+
+
+def calculate_roof_area(project: Project, materials: dict[str, Any]) -> float:
+    width_m, depth_m = project.footprint_bounds_m()
+    if width_m <= 0 or depth_m <= 0:
+        return 0.0
+    base_area = (width_m + project.roof_overhang * 2) * (depth_m + project.roof_overhang * 2)
+    roof_type = section_item(materials, "roof_types", project.roof_type)
+    area_factor = float(roof_type.get("area_factor", 1.25) or 1.25)
+    can_edit_angle = bool(roof_type.get("can_edit_angle", project.roof_type != "Плоская"))
+    angle = max(1.0, min(60.0, project.roof_angle))
+    angle_factor = 1.0 if not can_edit_angle else 1 / max(0.35, cos(radians(angle)))
+    return base_area * area_factor * angle_factor
 
 
 def format_money(value: float) -> str:
@@ -138,7 +179,12 @@ def estimate_to_text(project: Project, estimate: dict[str, float]) -> str:
         [
             "Примерная смета дома",
             "",
-            f"Этажность: {project.floors}",
+            f"Этажность: {project.floor_mode}",
+            f"Высота 1 этажа: {project.floor_1_height:.1f} м",
+            f"Высота 2 этажа: {project.floor_2_height:.1f} м",
+            f"Высота цоколя: {project.plinth_height:.1f} м",
+            f"Высота перекрытия: {project.slab_height:.1f} м",
+            f"Общая высота стен: {estimate['total_wall_height']:.1f} м",
             f"Фундамент: {project.foundation_type}",
             f"Крыша: {project.roof_type}",
             f"Кровля: {project.roofing}",
@@ -147,20 +193,26 @@ def estimate_to_text(project: Project, estimate: dict[str, float]) -> str:
             f"Высота конька: {project.roof_ridge_height:.1f} м",
             f"Свес крыши: {project.roof_overhang:.1f} м",
             f"Коэффициент сложности: {project.roof_complexity:.2f}",
-            f"Отделка: {project.finishing}",
+            f"Утепление: {project.insulation_type}",
+            f"Фасад: {project.facade_finish}",
             f"Стен: {len(project.walls)}",
             f"Дверей: {len(project.doors)}",
             f"Окон в смете: {sum(max(1, window.count) for window in project.windows)}",
             "",
             f"Площадь дома: {estimate['house_area']:.1f} м²",
+            f"Площадь застройки: {estimate['footprint_area']:.1f} м²",
             f"Общая длина стен: {estimate['wall_length']:.1f} м",
             f"Площадь стен: {estimate['wall_area']:.1f} м²",
+            f"Средняя толщина стен: {estimate['wall_thickness']:.2f} м",
             f"Примерная площадь крыши: {estimate['roof_area']:.1f} м²",
             f"Стоимость стен: {format_money(estimate['walls_cost'])}",
             f"Стоимость фундамента: {format_money(estimate['foundation_cost'])}",
             f"Стоимость крыши: {format_money(estimate['roof_cost'])}",
-            f"Стоимость окон и дверей: {format_money(estimate['openings_cost'])}",
-            f"Стоимость отделки: {format_money(estimate['finishing_cost'])}",
+            f"Стоимость окон: {format_money(estimate['windows_cost'])}",
+            f"Стоимость дверей: {format_money(estimate['doors_cost'])}",
+            f"Стоимость утепления: {format_money(estimate['insulation_cost'])}",
+            f"Стоимость фасада: {format_money(estimate['facade_cost'])}",
+            f"Поправка этажности: {format_money(estimate['complexity_extra'])}",
             "",
             f"Итого: {format_money(estimate['total'])}",
             "",
@@ -169,14 +221,120 @@ def estimate_to_text(project: Project, estimate: dict[str, float]) -> str:
     )
 
 
+def _window_price(window, materials: dict[str, Any]) -> float:
+    if window.price > 0:
+        return window.price
+    template = section_item(materials, "window_templates", window.template_name)
+    price = float(template.get("price", 0) or 0)
+    if price > 0:
+        return price
+    price_per_m2 = window.price_per_m2 or float(template.get("price_per_m2", 0) or 0)
+    return window.width * window.height * price_per_m2
+
+
+def _door_price(door, materials: dict[str, Any]) -> float:
+    if door.price > 0:
+        return door.price
+    template = section_item(materials, "door_templates", door.template_name)
+    return float(template.get("price", 0) or 0)
+
+
+def _floor_complexity_factor(project: Project) -> float:
+    if project.floor_mode == "2 этажа":
+        return 1.08
+    if project.floor_mode == "1 этаж + мансарда":
+        return 1.12
+    return 1.0
+
+
 def _merge_defaults(defaults: dict[str, Any], loaded: dict[str, Any]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
+    result = dict(loaded)
     for key, default_value in defaults.items():
-        loaded_value = loaded.get(key)
-        if isinstance(default_value, dict):
-            result[key] = default_value.copy()
-            if isinstance(loaded_value, dict):
-                result[key].update(loaded_value)
-        else:
-            result[key] = loaded_value if loaded_value is not None else default_value
+        if key not in result:
+            result[key] = default_value
+        elif isinstance(default_value, dict) and isinstance(result[key], dict):
+            nested = dict(default_value)
+            nested.update(result[key])
+            result[key] = nested
     return result
+
+
+def _fallback_materials() -> dict[str, Any]:
+    # Этот минимальный набор нужен только если пользователь удалил materials.json.
+    return {
+        "wall_materials": {
+            "Газоблок 300 мм": {
+                "name": "Газоблок 300 мм",
+                "thickness_m": 0.3,
+                "price_per_m2": 3200,
+                "price_per_m3": 10650,
+                "thermal_conductivity": 0.12,
+                "weight_per_m2": 135,
+                "category": "газоблок",
+            },
+            "Каркас 150 мм": {
+                "name": "Каркас 150 мм",
+                "thickness_m": 0.15,
+                "price_per_m2": 2400,
+                "price_per_m3": 16000,
+                "thermal_conductivity": 0.04,
+                "weight_per_m2": 55,
+                "category": "каркас",
+            },
+        },
+        "brick_types": {
+            "Кирпич керамический рядовой": {
+                "name": "Кирпич керамический рядовой",
+                "price_per_m2": 5200,
+                "price_per_piece": 18,
+                "pieces_per_m2": 102,
+                "weight": 3.5,
+                "thickness_m": 0.38,
+                "category": "кирпич",
+            }
+        },
+        "block_types": {
+            "Пеноблок": {
+                "name": "Пеноблок",
+                "thickness_m": 0.3,
+                "price_per_m2": 2800,
+                "price_per_m3": 9300,
+                "thermal_conductivity": 0.16,
+                "weight_per_m2": 125,
+                "category": "блок",
+            }
+        },
+        "roof_types": {
+            "Плоская": {"area_factor": 1.0, "complexity_factor": 1.0, "can_edit_ridge_height": False, "can_edit_angle": False, "needs_ridge_line": False},
+            "Односкатная": {"area_factor": 1.15, "complexity_factor": 1.05, "can_edit_ridge_height": True, "can_edit_angle": True, "needs_ridge_line": False},
+            "Двускатная": {"area_factor": 1.25, "complexity_factor": 1.1, "can_edit_ridge_height": True, "can_edit_angle": True, "needs_ridge_line": True},
+            "Вальмовая": {"area_factor": 1.35, "complexity_factor": 1.22, "can_edit_ridge_height": True, "can_edit_angle": True, "needs_ridge_line": True},
+            "Полувальмовая": {"area_factor": 1.32, "complexity_factor": 1.28, "can_edit_ridge_height": True, "can_edit_angle": True, "needs_ridge_line": True},
+            "Мансардная": {"area_factor": 1.55, "complexity_factor": 1.45, "can_edit_ridge_height": True, "can_edit_angle": True, "needs_ridge_line": True},
+            "Шатровая": {"area_factor": 1.4, "complexity_factor": 1.35, "can_edit_ridge_height": True, "can_edit_angle": True, "needs_ridge_line": False},
+        },
+        "roofing_materials": {
+            "Металлочерепица": {"price_per_m2": 2600, "weight_per_m2": 5, "waste_factor": 1.1, "service_life_years": 30, "installation_complexity": 1.0},
+            "Профлист": {"price_per_m2": 1900, "weight_per_m2": 4.5, "waste_factor": 1.08, "service_life_years": 25, "installation_complexity": 0.9},
+            "Мягкая кровля": {"price_per_m2": 3100, "weight_per_m2": 9, "waste_factor": 1.12, "service_life_years": 35, "installation_complexity": 1.1},
+        },
+        "foundation_types": {
+            "Плита": {"price_per_m2": 8500, "complexity_factor": 1.15},
+            "Лента": {"price_per_m2": 6200, "complexity_factor": 1.0},
+            "Сваи": {"price_per_m2": 3800, "complexity_factor": 0.85},
+        },
+        "insulation_types": {"Без утепления": {"price_per_m2": 0, "thermal_conductivity": 0, "thickness_m": 0}},
+        "facade_finish": {
+            "Без отделки": {"price_per_m2": 0, "complexity_factor": 1.0},
+            "Черновая": {"price_per_m2": 9000, "complexity_factor": 1.0},
+            "Чистовая": {"price_per_m2": 18000, "complexity_factor": 1.0},
+        },
+        "window_templates": {
+            "Стандартное окно 1.5 x 1.4 м": {"width": 1.5, "height": 1.4, "sill_height": 0.9, "glass_type": "двухкамерный", "price": 24000, "price_per_m2": 0},
+            "Свой размер": {"width": 1.2, "height": 1.4, "sill_height": 0.9, "glass_type": "двухкамерный", "price": 0, "price_per_m2": 14500, "custom": True},
+        },
+        "door_templates": {
+            "Входная 0.9 x 2.1 м": {"width": 0.9, "height": 2.1, "price": 42000, "opening_direction": "Наружу", "hinge_side": "Левая"},
+            "Свой размер": {"width": 0.9, "height": 2.1, "price": 0, "opening_direction": "Внутрь", "hinge_side": "Левая", "custom": True},
+        },
+    }

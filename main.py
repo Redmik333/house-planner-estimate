@@ -88,6 +88,25 @@ def main() -> int:
             background: transparent;
             border: none;
         }
+        QTabWidget::pane {
+            border: 1px solid #d7e0da;
+            border-radius: 12px;
+            background: #ffffff;
+        }
+        QTabBar::tab {
+            background: #f8faf7;
+            border: 1px solid #c3d0c9;
+            border-bottom: none;
+            padding: 10px 18px;
+            margin-right: 4px;
+            border-top-left-radius: 10px;
+            border-top-right-radius: 10px;
+        }
+        QTabBar::tab:selected {
+            background: #caeadf;
+            color: #123a32;
+            font-weight: bold;
+        }
         QPushButton {
             background: #f8faf7;
             border: 1px solid #c3d0c9;
