@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from math import atan2, hypot
+from math import atan2, cos, hypot, sin
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
@@ -24,6 +24,8 @@ class PlanCanvas(QWidget):
         self.selected_index = -1
         self.hover_wall = -1
         self.hover_ratio = 0.5
+        self.view_scale = 1.0
+        self.view_offset = QPointF(0, 0)
         self.door_template: dict[str, object] = {}
         self.window_template: dict[str, object] = {}
         self.stair_template: dict[str, object] = {
@@ -37,6 +39,8 @@ class PlanCanvas(QWidget):
         self._draft_start: QPointF | None = None
         self._draft_end: QPointF | None = None
         self._last_mouse_pos: QPointF | None = None
+        self._panning = False
+        self._last_pan_pos: QPointF | None = None
         self.setMinimumSize(720, 520)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -53,6 +57,7 @@ class PlanCanvas(QWidget):
         self.project = project
         self.project.ensure_floor_count(max(1, self.floor_level))
         self._select("project", -1)
+        self.fit_project_to_view()
         self.update()
         self.project_changed.emit()
 
@@ -74,6 +79,25 @@ class PlanCanvas(QWidget):
 
     def set_stair_template(self, template: dict[str, object]) -> None:
         self.stair_template = dict(template)
+
+    def fit_project_to_view(self) -> None:
+        bounds = self._project_bounds()
+        if bounds is None or bounds.width() <= 0 or bounds.height() <= 0:
+            self.view_scale = 1.0
+            self.view_offset = QPointF(self.width() * 0.12, self.height() * 0.12)
+            self.update()
+            return
+
+        target_w = max(1.0, self.width() * 0.76)
+        target_h = max(1.0, self.height() * 0.76)
+        scale = min(target_w / bounds.width(), target_h / bounds.height())
+        self.view_scale = max(0.25, min(5.0, scale))
+        center = bounds.center()
+        self.view_offset = QPointF(
+            self.width() / 2 - center.x() * self.view_scale,
+            self.height() / 2 - center.y() * self.view_scale,
+        )
+        self.update()
 
     def delete_selected_element(self) -> None:
         floor = self.current_floor()
@@ -123,19 +147,32 @@ class PlanCanvas(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor("#fbfbf8"))
+        painter.save()
+        painter.translate(self.view_offset)
+        painter.scale(self.view_scale, self.view_scale)
         self._draw_grid(painter)
-        self._draw_rooms(painter)
+        if self.project.show_rooms:
+            self._draw_rooms(painter)
         self._draw_walls(painter)
         self._draw_stairs(painter)
-        self._draw_windows(painter)
-        self._draw_doors(painter)
+        if self.project.show_windows:
+            self._draw_windows(painter)
+        if self.project.show_doors:
+            self._draw_doors(painter)
         self._draw_roof_overlay(painter)
         self._draw_draft(painter)
         self._draw_hover_preview(painter)
+        painter.restore()
         self._draw_hint(painter)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt API
-        pos = self._snap(event.position())
+        if event.button() == Qt.MiddleButton:
+            self._panning = True
+            self._last_pan_pos = event.position()
+            self.setCursor(Qt.ClosedHandCursor)
+            return
+
+        pos = self._snap(self._screen_to_world(event.position()))
         floor = self.current_floor()
         if event.button() != Qt.LeftButton:
             return
@@ -179,7 +216,14 @@ class PlanCanvas(QWidget):
             self.update()
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt API
-        pos = self._snap(event.position())
+        if self._panning and self._last_pan_pos is not None:
+            delta = event.position() - self._last_pan_pos
+            self.view_offset += delta
+            self._last_pan_pos = event.position()
+            self.update()
+            return
+
+        pos = self._snap(self._screen_to_world(event.position()))
         if self.tool == "wall" and self._draft_start is not None:
             self._draft_end = pos
             self.update()
@@ -200,6 +244,12 @@ class PlanCanvas(QWidget):
                 self.update()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if event.button() == Qt.MiddleButton:
+            self._panning = False
+            self._last_pan_pos = None
+            self.unsetCursor()
+            return
+
         if self.tool == "wall" and self._draft_start is not None and self._draft_end is not None:
             if hypot(self._draft_end.x() - self._draft_start.x(), self._draft_end.y() - self._draft_start.y()) >= 20:
                 floor_height = self.project.floor_2_height if self.floor_level == 2 else self.project.floor_1_height
@@ -217,6 +267,18 @@ class PlanCanvas(QWidget):
             self._draft_end = None
             self.update()
         self._last_mouse_pos = None
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if event.button() == Qt.MiddleButton:
+            self.fit_project_to_view()
+
+    def wheelEvent(self, event) -> None:  # noqa: N802 - Qt API
+        cursor = event.position()
+        before = self._screen_to_world(cursor)
+        factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
+        self.view_scale = max(0.2, min(6.0, self.view_scale * factor))
+        self.view_offset = QPointF(cursor.x() - before.x() * self.view_scale, cursor.y() - before.y() * self.view_scale)
+        self.update()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt API
         if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
@@ -244,18 +306,24 @@ class PlanCanvas(QWidget):
     def _draw_grid(self, painter: QPainter) -> None:
         thin = QPen(QColor("#e7e2d7"), 1)
         thick = QPen(QColor("#d2c8b8"), 1)
-        for x in range(0, self.width(), self.grid_size):
+        top_left = self._screen_to_world(QPointF(0, 0))
+        bottom_right = self._screen_to_world(QPointF(self.width(), self.height()))
+        left = int(top_left.x() // self.grid_size * self.grid_size) - self.grid_size
+        right = int(bottom_right.x() // self.grid_size * self.grid_size) + self.grid_size
+        top = int(top_left.y() // self.grid_size * self.grid_size) - self.grid_size
+        bottom = int(bottom_right.y() // self.grid_size * self.grid_size) + self.grid_size
+        for x in range(left, right + 1, self.grid_size):
             painter.setPen(thick if x % 100 == 0 else thin)
-            painter.drawLine(x, 0, x, self.height())
-        for y in range(0, self.height(), self.grid_size):
+            painter.drawLine(x, top, x, bottom)
+        for y in range(top, bottom + 1, self.grid_size):
             painter.setPen(thick if y % 100 == 0 else thin)
-            painter.drawLine(0, y, self.width(), y)
+            painter.drawLine(left, y, right, y)
 
     def _draw_walls(self, painter: QPainter) -> None:
         for index, wall in enumerate(self.current_floor().walls):
             color = QColor("#1f2427")
             if self.selected_kind == "wall" and index == self.selected_index:
-                color = QColor("#197a68")
+                color = QColor("#d97a2b")
             thickness_px = max(6, min(32, wall.thickness * PIXELS_PER_METER))
             if self.selected_kind == "wall" and index == self.selected_index:
                 thickness_px += 2
@@ -306,8 +374,8 @@ class PlanCanvas(QWidget):
             width = max(28.0, stair.width * PIXELS_PER_METER)
             length = max(60.0, stair.length * PIXELS_PER_METER)
             rect = QRectF(x - width / 2, y - length / 2, width, length)
-            painter.setPen(QPen(QColor("#8b5a2b" if not selected else "#c46d20"), 2))
-            painter.setBrush(QColor(225, 185, 126, 135 if not selected else 190))
+            painter.setPen(QPen(QColor("#8b5a2b" if not selected else "#2f9f72"), 2 if not selected else 4))
+            painter.setBrush(QColor(225, 185, 126, 135 if not selected else 170))
 
             if stair.stair_type == "Г-образная":
                 painter.drawRect(QRectF(rect.left(), rect.top(), width, length * 0.62))
@@ -353,7 +421,7 @@ class PlanCanvas(QWidget):
         painter.drawEllipse(hinge, 4, 4)
 
         if selected:
-            painter.setPen(QPen(QColor("#ffb35c"), 2, Qt.DashLine))
+            painter.setPen(QPen(QColor("#f28b38"), 3, Qt.DashLine))
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(QRectF(center.x() - width_px / 2 - 8, center.y() - width_px / 2 - 8, width_px + 16, width_px + 16))
 
@@ -369,7 +437,7 @@ class PlanCanvas(QWidget):
             painter.drawLine(start, end)
 
         if selected:
-            painter.setPen(QPen(QColor("#4ab3e8"), 2, Qt.DashLine))
+            painter.setPen(QPen(QColor("#2aa6df"), 3, Qt.DashLine))
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(QRectF(center.x() - half - 7, center.y() - 14, width_px + 14, 28))
 
@@ -401,14 +469,20 @@ class PlanCanvas(QWidget):
         outline_width = 4 if selected else 2
         ridge_width = 6 if selected else 4
         polygon = QPolygonF(roof_points)
-        painter.setPen(QPen(QColor(118, 83, 41, 230), outline_width, Qt.DashLine))
-        painter.setBrush(QBrush(QColor(184, 125, 63, 70 if selected else 45)))
-        painter.drawPolygon(polygon)
+        if self.project.show_roof_overhangs or selected:
+            painter.setPen(QPen(QColor(118, 83, 41, 230), outline_width, Qt.DashLine))
+            painter.setBrush(QBrush(QColor(184, 125, 63, 70 if selected else 45) if (self.project.show_roof_slopes or selected) else Qt.transparent))
+            painter.drawPolygon(polygon)
+        elif self.project.show_roof_slopes:
+            painter.setPen(QPen(QColor(118, 83, 41, 150), 1))
+            painter.setBrush(QBrush(QColor(184, 125, 63, 60 if selected else 38)))
+            painter.drawPolygon(polygon)
 
         # Внутренний контур показывает стены, внешний пунктир - свес крыши.
-        painter.setBrush(Qt.NoBrush)
-        painter.setPen(QPen(QColor("#5f6f78"), 1, Qt.DotLine))
-        painter.drawPolygon(QPolygonF(base_points))
+        if self.project.show_roof_overhangs:
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor("#5f6f78"), 1, Qt.DotLine))
+            painter.drawPolygon(QPolygonF(base_points))
 
         roof_type = self.project.roof_type
         left = min(point.x() for point in roof_points)
@@ -429,10 +503,13 @@ class PlanCanvas(QWidget):
             else:
                 ridge_start = QPointF(left + 18, center_y)
                 ridge_end = QPointF(right - 18, center_y)
-            painter.drawLine(ridge_start, ridge_end)
-            self._draw_roof_ridge_labels(painter, ridge_start, ridge_end)
-            self._draw_gables(painter, left, right, top, bottom)
-            self._draw_slope_arrows(painter, ridge_start, ridge_end, left, right, top, bottom)
+            if self.project.show_roof_ridge:
+                painter.drawLine(ridge_start, ridge_end)
+                if self.project.show_roof_dimensions:
+                    self._draw_roof_ridge_labels(painter, ridge_start, ridge_end)
+            if self.project.show_roof_slopes:
+                self._draw_gables(painter, left, right, top, bottom)
+                self._draw_slope_arrows(painter, ridge_start, ridge_end, left, right, top, bottom)
             if roof_type == "Мансардная":
                 painter.setPen(QPen(QColor(136, 76, 28, 150), 1, Qt.DashLine))
                 painter.drawLine(QPointF(left + 18, center_y - 18), QPointF(right - 18, center_y - 18))
@@ -444,10 +521,12 @@ class PlanCanvas(QWidget):
             else:
                 start = QPointF(center_x, bottom - 18)
                 end = QPointF(center_x, top + 18)
-            painter.setPen(QPen(QColor(136, 76, 28, 230), 3, Qt.SolidLine, Qt.RoundCap))
-            self._draw_arrow(painter, start, end)
-            slope_mid = QPointF((start.x() + end.x()) / 2, (start.y() + end.y()) / 2)
-            self._label_box(painter, slope_mid + QPointF(10, -28), f"уклон {self.project.roof_angle:.0f}°")
+            if self.project.show_roof_slopes:
+                painter.setPen(QPen(QColor(136, 76, 28, 230), 3, Qt.SolidLine, Qt.RoundCap))
+                self._draw_arrow(painter, start, end)
+            if self.project.show_roof_dimensions:
+                slope_mid = QPointF((start.x() + end.x()) / 2, (start.y() + end.y()) / 2)
+                self._label_box(painter, slope_mid + QPointF(10, -28), f"уклон {self.project.roof_angle:.0f}°")
         elif roof_type in ("Вальмовая", "Шатровая"):
             if self.project.roof_ridge_direction == "по Y":
                 ridge_a = QPointF(center_x, top + 22)
@@ -457,18 +536,23 @@ class PlanCanvas(QWidget):
                 ridge_b = QPointF(right - 22, center_y)
             if roof_type == "Вальмовая":
                 ridge_start, ridge_end = ridge_a, ridge_b
-                painter.drawLine(ridge_a, ridge_b)
-                self._draw_roof_ridge_labels(painter, ridge_a, ridge_b)
+                if self.project.show_roof_ridge:
+                    painter.drawLine(ridge_a, ridge_b)
+                    if self.project.show_roof_dimensions:
+                        self._draw_roof_ridge_labels(painter, ridge_a, ridge_b)
                 targets = (ridge_a, ridge_b)
             else:
                 targets = (QPointF(center_x, center_y),)
-                self._label_box(painter, QPointF(center_x + 10, center_y - 28), f"конёк {self.project.roof_ridge_height:.1f} м")
-            for corner in (QPointF(left, top), QPointF(right, top), QPointF(right, bottom), QPointF(left, bottom)):
-                target = min(targets, key=lambda item: self._distance(corner, item))
-                painter.drawLine(corner, target)
-                self._draw_arrow(painter, target, corner)
+                if self.project.show_roof_dimensions:
+                    self._label_box(painter, QPointF(center_x + 10, center_y - 28), f"конёк {self.project.roof_ridge_height:.1f} м")
+            if self.project.show_roof_slopes:
+                for corner in (QPointF(left, top), QPointF(right, top), QPointF(right, bottom), QPointF(left, bottom)):
+                    target = min(targets, key=lambda item: self._distance(corner, item))
+                    painter.drawLine(corner, target)
+                    self._draw_arrow(painter, target, corner)
 
-        self._draw_overhang_labels(painter, base_points, roof_points)
+        if self.project.show_roof_overhangs and self.project.show_roof_dimensions:
+            self._draw_overhang_labels(painter, base_points, roof_points)
 
     def _draw_roof_ridge_labels(self, painter: QPainter, start: QPointF, end: QPointF) -> None:
         length_m = self.project.roof_ridge_length_m()
@@ -492,11 +576,13 @@ class PlanCanvas(QWidget):
         if self.project.roof_ridge_direction == "по Y":
             painter.drawLine(QPointF(left + 8, top), QPointF(right - 8, top))
             painter.drawLine(QPointF(left + 8, bottom), QPointF(right - 8, bottom))
-            self._label_box(painter, QPointF(left + 12, top + 12), f"фронтон {self.project.roof_gable_height:.1f} м")
+            if self.project.show_roof_dimensions:
+                self._label_box(painter, QPointF(left + 12, top + 12), f"фронтон {self.project.roof_gable_height:.1f} м")
         else:
             painter.drawLine(QPointF(left, top + 8), QPointF(left, bottom - 8))
             painter.drawLine(QPointF(right, top + 8), QPointF(right, bottom - 8))
-            self._label_box(painter, QPointF(left + 12, top + 12), f"фронтон {self.project.roof_gable_height:.1f} м")
+            if self.project.show_roof_dimensions:
+                self._label_box(painter, QPointF(left + 12, top + 12), f"фронтон {self.project.roof_gable_height:.1f} м")
 
     def _draw_overhang_labels(self, painter: QPainter, base_points: list[QPointF], roof_points: list[QPointF]) -> None:
         if not base_points or not roof_points or self.project.roof_overhang <= 0:
@@ -596,14 +682,16 @@ class PlanCanvas(QWidget):
             return []
 
         gaps: list[tuple[float, float]] = []
-        for door in floor.doors:
-            if door.wall_index == wall_index:
-                half_ratio = door.width / wall.length_m / 2
-                gaps.append((door.position - half_ratio, door.position + half_ratio))
-        for window in floor.windows:
-            if window.wall_index == wall_index:
-                half_ratio = window.width / wall.length_m / 2
-                gaps.append((window.position - half_ratio, window.position + half_ratio))
+        if self.project.show_doors:
+            for door in floor.doors:
+                if door.wall_index == wall_index:
+                    half_ratio = door.width / wall.length_m / 2
+                    gaps.append((door.position - half_ratio, door.position + half_ratio))
+        if self.project.show_windows:
+            for window in floor.windows:
+                if window.wall_index == wall_index:
+                    half_ratio = window.width / wall.length_m / 2
+                    gaps.append((window.position - half_ratio, window.position + half_ratio))
 
         spans: list[tuple[float, float]] = []
         cursor = 0.0
@@ -684,7 +772,7 @@ class PlanCanvas(QWidget):
 
     def _wall_at(self, pos: QPointF) -> tuple[int, float]:
         best_index = -1
-        best_distance = 14.0
+        best_distance = max(8.0, 14.0 / max(0.4, self.view_scale))
         best_ratio = 0.5
         for index, wall in enumerate(self.current_floor().walls):
             distance, ratio = self._point_to_segment_distance(pos, wall)
@@ -729,12 +817,45 @@ class PlanCanvas(QWidget):
     def _distance(a: QPointF, b: QPointF) -> float:
         return hypot(a.x() - b.x(), a.y() - b.y())
 
+    def _screen_to_world(self, pos: QPointF) -> QPointF:
+        scale = self.view_scale or 1.0
+        return QPointF((pos.x() - self.view_offset.x()) / scale, (pos.y() - self.view_offset.y()) / scale)
+
+    def _project_bounds(self) -> QRectF | None:
+        points: list[QPointF] = []
+        floor = self.current_floor()
+        for wall in floor.walls:
+            points.append(QPointF(wall.start.x, wall.start.y))
+            points.append(QPointF(wall.end.x, wall.end.y))
+        for room in floor.rooms:
+            points.append(QPointF(room.center.x - 80, room.center.y - 40))
+            points.append(QPointF(room.center.x + 80, room.center.y + 40))
+        for stair in floor.stairs:
+            width = max(28.0, stair.width * PIXELS_PER_METER)
+            length = max(60.0, stair.length * PIXELS_PER_METER)
+            points.append(QPointF(stair.position.x - width, stair.position.y - length))
+            points.append(QPointF(stair.position.x + width, stair.position.y + length))
+        if self.project.show_roof and self.floor_level == 1:
+            points.extend(self._roof_polygon_points())
+        if not points:
+            return None
+        left = min(point.x() for point in points)
+        right = max(point.x() for point in points)
+        top = min(point.y() for point in points)
+        bottom = max(point.y() for point in points)
+        padding = 80
+        return QRectF(left - padding, top - padding, max(1.0, right - left + padding * 2), max(1.0, bottom - top + padding * 2))
+
 
 class RoofPreviewWidget(QWidget):
     def __init__(self, project: Project) -> None:
         super().__init__()
         self.project = project
+        self.yaw = 0.0
+        self.preview_zoom = 1.0
+        self._drag_pos: QPointF | None = None
         self.setMinimumHeight(210)
+        self.setMouseTracking(True)
 
     def set_project(self, project: Project) -> None:
         self.project = project
@@ -754,11 +875,13 @@ class RoofPreviewWidget(QWidget):
         width_m = max(1.0, width_m + self.project.roof_overhang * 2)
         depth_m = max(1.0, depth_m + self.project.roof_overhang * 2)
         scale = min((self.width() - 60) / (width_m + depth_m), (self.height() - 40) / (width_m * 0.25 + depth_m * 0.25 + self.project.roof_ridge_height + 2))
-        scale = max(18, min(48, scale))
+        scale = max(18, min(80, scale)) * self.preview_zoom
         origin = QPointF(self.width() / 2, self.height() * 0.72)
 
         def iso(x: float, y: float, z: float = 0.0) -> QPointF:
-            return QPointF(origin.x() + (x - y) * scale, origin.y() + (x + y) * scale * 0.42 - z * scale)
+            rx = x * cos(self.yaw) - y * sin(self.yaw)
+            ry = x * sin(self.yaw) + y * cos(self.yaw)
+            return QPointF(origin.x() + (rx - ry) * scale, origin.y() + (rx + ry) * scale * 0.42 - z * scale)
 
         x0, x1 = -width_m / 2, width_m / 2
         y0, y1 = -depth_m / 2, depth_m / 2
@@ -803,7 +926,29 @@ class RoofPreviewWidget(QWidget):
         painter.setPen(QColor("#31413a"))
         painter.setFont(QFont("Arial", 9))
         painter.drawText(12, 22, f"3D: {self.project.roof_type}, {self.project.roof_ridge_direction}")
+        painter.drawText(12, 42, "ЛКМ - вращение, колесо - масштаб")
 
     def _draw_face(self, painter: QPainter, points: list[QPointF], color: QColor) -> None:
         painter.setBrush(QBrush(color))
         painter.drawPolygon(QPolygonF(points))
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = event.position()
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if self._drag_pos is None or not (event.buttons() & Qt.LeftButton):
+            return
+        delta = event.position() - self._drag_pos
+        self.yaw += delta.x() * 0.01
+        self._drag_pos = event.position()
+        self.update()
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = None
+
+    def wheelEvent(self, event) -> None:  # noqa: N802 - Qt API
+        factor = 1.12 if event.angleDelta().y() > 0 else 1 / 1.12
+        self.preview_zoom = max(0.45, min(2.8, self.preview_zoom * factor))
+        self.update()

@@ -13,29 +13,34 @@ def main() -> int:
         """
         QWidget {
             font-family: Segoe UI, Arial;
-            font-size: 14px;
+            font-size: 15px;
             color: #172126;
         }
         QMainWindow, QMenuBar, QMenu {
-            background: #eef2ef;
+            background: #f3f5f2;
             color: #172126;
         }
         QFrame, QGroupBox {
             background: #ffffff;
-            border: 1px solid #d7e0da;
-            border-radius: 14px;
+            border: 1px solid #d9e0dc;
+            border-radius: 12px;
             color: #172126;
         }
+        QFrame#TopBar {
+            background: #ffffff;
+            border: 1px solid #d9e0dc;
+            border-radius: 12px;
+        }
         QGroupBox {
-            margin-top: 14px;
-            padding: 14px;
+            margin-top: 16px;
+            padding: 16px;
         }
         QGroupBox::title {
             subcontrol-origin: margin;
             left: 14px;
             padding: 0 8px;
             font-weight: bold;
-            color: #172126;
+            color: #21302f;
             background: #ffffff;
         }
         QLabel {
@@ -47,18 +52,18 @@ def main() -> int:
             background: #ffffff;
             color: #172126;
             border: 1px solid #b8c6bf;
-            border-radius: 9px;
-            padding: 7px 10px;
-            min-height: 34px;
+            border-radius: 10px;
+            padding: 8px 11px;
+            min-height: 36px;
         }
         QSpinBox, QDoubleSpinBox {
             background: #ffffff;
             color: #172126;
             border: 1px solid #aebfb7;
-            border-radius: 9px;
+            border-radius: 10px;
             padding-left: 10px;
             padding-right: 32px;
-            min-height: 38px;
+            min-height: 40px;
         }
         QSpinBox::up-button, QDoubleSpinBox::up-button {
             subcontrol-origin: border;
@@ -94,45 +99,56 @@ def main() -> int:
             background: #ffffff;
         }
         QTabBar::tab {
-            background: #f8faf7;
-            border: 1px solid #c3d0c9;
+            background: #f7f8f6;
+            border: 1px solid #d5ded8;
             border-bottom: none;
-            padding: 10px 18px;
+            padding: 12px 20px;
             margin-right: 4px;
             border-top-left-radius: 10px;
             border-top-right-radius: 10px;
         }
         QTabBar::tab:selected {
-            background: #caeadf;
-            color: #123a32;
+            background: #e6efea;
+            color: #203b35;
             font-weight: bold;
         }
         QPushButton {
-            background: #f8faf7;
-            border: 1px solid #c3d0c9;
+            background: #f8f9f7;
+            border: 1px solid #cdd7d1;
             border-radius: 12px;
             padding: 12px;
             text-align: left;
             color: #172126;
         }
         QPushButton:checked {
-            background: #caeadf;
-            border: 2px solid #16846d;
+            background: #e2eee9;
+            border: 2px solid #6f9186;
             font-weight: bold;
-            color: #123a32;
+            color: #1f4038;
         }
         QPushButton:hover {
-            background: #edf5ef;
+            background: #edf2ee;
+        }
+        QToolButton#TopMenuButton, QPushButton#TopActionButton {
+            background: #f8f9f7;
+            border: 1px solid #d4ddd7;
+            border-radius: 10px;
+            padding: 9px 14px;
+            color: #1f2c2a;
+            font-weight: 600;
+        }
+        QToolButton#TopMenuButton:hover, QPushButton#TopActionButton:hover {
+            background: #eef3ef;
         }
         QLabel#PanelTitle {
-            font-size: 20px;
+            font-size: 21px;
             font-weight: bold;
             border: none;
         }
         QLabel#AppTitle {
-            font-size: 26px;
+            font-size: 28px;
             font-weight: bold;
-            color: #143b34;
+            color: #1f3a36;
             padding: 4px 6px;
         }
         QLabel#TotalLabel {

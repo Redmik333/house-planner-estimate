@@ -125,7 +125,11 @@ def calculate_estimate(project: Project, materials: dict[str, Any]) -> dict[str,
     waste_factor = float(roofing.get("waste_factor", 1) or 1)
     install_factor = float(roofing.get("installation_complexity", 1) or 1)
     roof_type_factor = float(roof_type.get("complexity_factor", 1) or 1)
-    roof_cost = roof_area * roofing_rate * waste_factor * install_factor * roof_type_factor * project.roof_complexity
+    roofing_cost = roof_area * roofing_rate * waste_factor * install_factor * roof_type_factor * project.roof_complexity
+    gable_area = calculate_gable_area(project)
+    gable_rate = _gable_rate(project, materials)
+    gable_cost = gable_area * gable_rate
+    roof_cost = roofing_cost + gable_cost
 
     windows_cost = sum(_window_price(window, materials) * max(1, window.count) for window in project.all_windows())
     doors_cost = sum(_door_price(door, materials) for door in project.all_doors())
@@ -161,6 +165,7 @@ def calculate_estimate(project: Project, materials: dict[str, Any]) -> dict[str,
         "walls_cost": walls_cost,
         "foundation_cost": foundation_cost,
         "roof_cost": roof_cost,
+        "roofing_cost": roofing_cost,
         "roof_area": roof_area,
         "roof_slope_count": roof_metrics["slope_count"],
         "roof_slope_area": roof_metrics["slope_area"],
@@ -172,6 +177,9 @@ def calculate_estimate(project: Project, materials: dict[str, Any]) -> dict[str,
         "roof_waste_factor": waste_factor,
         "roof_installation_complexity": install_factor,
         "roof_service_life": float(roofing.get("service_life_years", 0) or 0),
+        "gable_area": gable_area,
+        "gable_height": project.roof_gable_height,
+        "gable_cost": gable_cost,
         "windows_cost": windows_cost,
         "doors_cost": doors_cost,
         "openings_cost": openings_cost,
@@ -222,6 +230,29 @@ def calculate_roof_metrics(project: Project, materials: dict[str, Any]) -> dict[
     }
 
 
+def calculate_gable_area(project: Project) -> float:
+    if project.roof_type not in ("Двускатная", "Полувальмовая", "Мансардная"):
+        return 0.0
+    span = project.roof_span_width_m()
+    if span <= 0:
+        return 0.0
+    count = 2.0
+    if project.roof_type == "Полувальмовая":
+        count = 1.2
+    if project.roof_type == "Мансардная":
+        count = 2.0
+    return 0.5 * span * max(0.0, project.roof_gable_height) * count
+
+
+def _gable_rate(project: Project, materials: dict[str, Any]) -> float:
+    facade = section_item(materials, "facade_finish", project.facade_finish or project.finishing)
+    facade_rate = float(facade.get("price_per_m2", 0) or 0)
+    if facade_rate:
+        return facade_rate
+    wall_info = wall_material_info(materials, project.wall_material)
+    return float(wall_info.get("price_per_m2", 0) or 0)
+
+
 def format_money(value: float) -> str:
     return f"{value:,.0f} ₽".replace(",", " ")
 
@@ -263,8 +294,11 @@ def estimate_to_text(project: Project, estimate: dict[str, float]) -> str:
             f"Примерная площадь крыши: {estimate['roof_area']:.1f} м²",
             f"Площадь одного ската: {estimate['roof_slope_area']:.1f} м²",
             f"Длина конька: {estimate['roof_ridge_length']:.1f} м",
+            f"Площадь фронтонов: {estimate['gable_area']:.1f} м²",
             f"Стоимость стен: {format_money(estimate['walls_cost'])}",
             f"Стоимость фундамента: {format_money(estimate['foundation_cost'])}",
+            f"Стоимость кровли: {format_money(estimate['roofing_cost'])}",
+            f"Стоимость фронтонов: {format_money(estimate['gable_cost'])}",
             f"Стоимость крыши: {format_money(estimate['roof_cost'])}",
             f"Стоимость окон: {format_money(estimate['windows_cost'])}",
             f"Стоимость дверей: {format_money(estimate['doors_cost'])}",

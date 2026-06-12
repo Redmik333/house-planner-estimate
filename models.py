@@ -292,6 +292,13 @@ class Project:
     roof_complexity: float = 1.0
     auto_roof_ridge_height: bool = True
     show_roof: bool = False
+    show_roof_ridge: bool = True
+    show_roof_slopes: bool = True
+    show_roof_overhangs: bool = True
+    show_roof_dimensions: bool = True
+    show_rooms: bool = True
+    show_windows: bool = True
+    show_doors: bool = True
     finishing: str = "Без отделки"
     insulation_type: str = "Без утепления"
     facade_finish: str = "Без отделки"
@@ -556,6 +563,13 @@ class Project:
             "roof_complexity": self.roof_complexity,
             "auto_roof_ridge_height": self.auto_roof_ridge_height,
             "show_roof": self.show_roof,
+            "show_roof_ridge": self.show_roof_ridge,
+            "show_roof_slopes": self.show_roof_slopes,
+            "show_roof_overhangs": self.show_roof_overhangs,
+            "show_roof_dimensions": self.show_roof_dimensions,
+            "show_rooms": self.show_rooms,
+            "show_windows": self.show_windows,
+            "show_doors": self.show_doors,
             "finishing": self.finishing,
             "insulation_type": self.insulation_type,
             "facade_finish": self.facade_finish,
@@ -618,6 +632,13 @@ class Project:
             roof_complexity=float(data.get("roof_complexity", 1.0)),
             auto_roof_ridge_height=bool(data.get("auto_roof_ridge_height", True)),
             show_roof=bool(data.get("show_roof", False)),
+            show_roof_ridge=bool(data.get("show_roof_ridge", True)),
+            show_roof_slopes=bool(data.get("show_roof_slopes", True)),
+            show_roof_overhangs=bool(data.get("show_roof_overhangs", True)),
+            show_roof_dimensions=bool(data.get("show_roof_dimensions", True)),
+            show_rooms=bool(data.get("show_rooms", True)),
+            show_windows=bool(data.get("show_windows", True)),
+            show_doors=bool(data.get("show_doors", True)),
             finishing=str(data.get("finishing", "Без отделки")),
             insulation_type=str(data.get("insulation_type", "Без утепления")),
             facade_finish=str(data.get("facade_finish", data.get("finishing", "Без отделки"))),
