@@ -24,6 +24,8 @@ if (root / "prices.json").exists():
     datas.append((str(root / "prices.json"), "."))
 if (root / "materials.json").exists():
     datas.append((str(root / "materials.json"), "."))
+if (root / "version.json").exists():
+    datas.append((str(root / "version.json"), "."))
 if (root / "README.md").exists():
     datas.append((str(root / "README.md"), "."))
 if (root / "assets").exists():

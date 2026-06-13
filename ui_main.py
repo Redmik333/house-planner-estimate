@@ -57,6 +57,7 @@ from pricing import (
 from storage import export_text, load_project, save_project
 from section_view import SectionView
 from site_canvas import SITE_ELEMENT_PRESETS, SiteCanvas
+from updater import APP_VERSION, check_for_updates, download_update, run_installer
 
 
 class OpeningTemplateDialog(QDialog):
@@ -398,6 +399,7 @@ class MainWindow(QMainWindow):
         self._refresh_estimate()
         QTimer.singleShot(0, self._fit_current_project)
         QTimer.singleShot(150, self._show_welcome_or_start)
+        QTimer.singleShot(2500, lambda: self._check_updates(manual=False))
 
     def _all_canvases(self) -> tuple[PlanCanvas, PlanCanvas]:
         return self.canvas1, self.canvas2
@@ -447,9 +449,13 @@ class MainWindow(QMainWindow):
         reset_tips_action.triggered.connect(self._reset_tips)
         demo_action = QAction("Открыть демонстрационный дом", self)
         demo_action.triggered.connect(self._open_demo_project)
+        check_updates_action = QAction("Проверить обновления", self)
+        check_updates_action.triggered.connect(lambda: self._check_updates(manual=True))
         help_menu.addAction(quick_tutorial_action)
         help_menu.addAction(reset_tips_action)
         help_menu.addAction(demo_action)
+        help_menu.addSeparator()
+        help_menu.addAction(check_updates_action)
 
     def _build_layout(self) -> None:
         root = QWidget()
@@ -2122,6 +2128,69 @@ class MainWindow(QMainWindow):
     def _reset_tips(self) -> None:
         self.settings.setValue("welcome_hidden", False)
         self._start_tutorial()
+
+    def _check_updates(self, manual: bool = False) -> None:
+        if not manual and QApplication.activeModalWidget() is not None:
+            QTimer.singleShot(3000, lambda: self._check_updates(manual=False))
+            return
+        try:
+            update_info = check_for_updates()
+        except Exception:
+            if manual:
+                QMessageBox.information(self, "Обновления", "Не удалось проверить обновления. Проверьте интернет.")
+            return
+        if not update_info:
+            if manual:
+                QMessageBox.information(self, "Обновления", f"У вас актуальная версия {APP_VERSION}.")
+            return
+        self._show_update_dialog(update_info)
+
+    def _show_update_dialog(self, update_info: dict[str, Any]) -> None:
+        new_version = str(update_info.get("version", ""))
+        notes = str(update_info.get("notes", ""))
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Доступно обновление")
+        dialog.setObjectName("LightDialog")
+        dialog.setMinimumSize(520, 320)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(14)
+
+        title = QLabel(f"Доступна новая версия {new_version}")
+        title.setObjectName("PanelTitle")
+        title.setWordWrap(True)
+        layout.addWidget(title)
+
+        body = QLabel(
+            f"Текущая версия: {APP_VERSION}\n"
+            f"Новая версия: {new_version}\n\n"
+            f"Что изменилось:\n{notes or 'Описание изменений не указано.'}"
+        )
+        body.setWordWrap(True)
+        layout.addWidget(body)
+
+        buttons = QHBoxLayout()
+        update_button = QPushButton("Обновить")
+        later_button = QPushButton("Позже")
+        update_button.setMinimumHeight(48)
+        later_button.setMinimumHeight(48)
+        buttons.addWidget(update_button)
+        buttons.addWidget(later_button)
+        layout.addLayout(buttons)
+
+        update_button.clicked.connect(lambda: self._download_and_run_update(update_info, dialog))
+        later_button.clicked.connect(dialog.reject)
+        dialog.exec()
+
+    def _download_and_run_update(self, update_info: dict[str, Any], dialog: QDialog) -> None:
+        try:
+            installer_path = download_update(update_info)
+            run_installer(installer_path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Обновление", f"Не удалось скачать или запустить обновление:\n{exc}")
+            return
+        dialog.accept()
+        QApplication.quit()
 
     def _show_start_screen(self) -> None:
         if self._start_screen_shown or self._project_has_walls():
