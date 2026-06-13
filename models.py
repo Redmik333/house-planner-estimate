@@ -251,6 +251,81 @@ class ExtraCostItem:
 
 
 @dataclass
+class SiteParams:
+    """Параметры участка вокруг дома."""
+
+    area_sotka: float = 6.0
+    width_m: float = 20.0
+    length_m: float = 30.0
+    shape: str = "Прямоугольник"
+    front_setback_m: float = 5.0
+    rear_setback_m: float = 3.0
+    left_setback_m: float = 3.0
+    right_setback_m: float = 3.0
+    entry_side: str = "Юг"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(data: dict[str, Any] | None) -> "SiteParams":
+        data = data or {}
+        return SiteParams(
+            area_sotka=float(data.get("area_sotka", 6.0)),
+            width_m=float(data.get("width_m", 20.0)),
+            length_m=float(data.get("length_m", 30.0)),
+            shape=str(data.get("shape", "Прямоугольник")),
+            front_setback_m=float(data.get("front_setback_m", 5.0)),
+            rear_setback_m=float(data.get("rear_setback_m", 3.0)),
+            left_setback_m=float(data.get("left_setback_m", 3.0)),
+            right_setback_m=float(data.get("right_setback_m", 3.0)),
+            entry_side=str(data.get("entry_side", "Юг")),
+        )
+
+
+@dataclass
+class SiteElement:
+    """Условный объект на участке: ворота, септик, скважина, линия воды и т.п."""
+
+    kind: str
+    name: str
+    position: Point
+    width_m: float = 1.0
+    length_m: float = 1.0
+    quantity: float = 1.0
+    unit: str = "шт"
+    price: float = 0.0
+    parameters: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "name": self.name,
+            "position": self.position.to_dict(),
+            "width_m": self.width_m,
+            "length_m": self.length_m,
+            "quantity": self.quantity,
+            "unit": self.unit,
+            "price": self.price,
+            "parameters": self.parameters,
+        }
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "SiteElement":
+        return SiteElement(
+            kind=str(data.get("kind", "custom")),
+            name=str(data.get("name", "Элемент участка")),
+            position=Point.from_dict(data.get("position", {"x": 0, "y": 0})),
+            width_m=float(data.get("width_m", 1.0)),
+            length_m=float(data.get("length_m", 1.0)),
+            quantity=float(data.get("quantity", 1.0)),
+            unit=str(data.get("unit", "шт")),
+            price=float(data.get("price", 0.0)),
+            parameters=dict(data.get("parameters", {})),
+        )
+
+
+@dataclass
 class FloorPlan:
     level: int
     name: str
@@ -321,6 +396,13 @@ class Project:
     insulation_type: str = "Без утепления"
     facade_finish: str = "Без отделки"
     extra_costs: list[ExtraCostItem] = field(default_factory=list)
+    site: SiteParams = field(default_factory=SiteParams)
+    site_elements: list[SiteElement] = field(default_factory=list)
+    show_architecture_layer: bool = True
+    show_site_layer: bool = True
+    show_electric_layer: bool = True
+    show_plumbing_layer: bool = True
+    show_estimate_layer: bool = True
 
     def __post_init__(self) -> None:
         self.ensure_floor_count(max(1, self.floors))
@@ -593,6 +675,13 @@ class Project:
             "insulation_type": self.insulation_type,
             "facade_finish": self.facade_finish,
             "extra_costs": [item.to_dict() for item in self.extra_costs],
+            "site": self.site.to_dict(),
+            "site_elements": [item.to_dict() for item in self.site_elements],
+            "show_architecture_layer": self.show_architecture_layer,
+            "show_site_layer": self.show_site_layer,
+            "show_electric_layer": self.show_electric_layer,
+            "show_plumbing_layer": self.show_plumbing_layer,
+            "show_estimate_layer": self.show_estimate_layer,
         }
 
     @staticmethod
@@ -663,6 +752,13 @@ class Project:
             insulation_type=str(data.get("insulation_type", "Без утепления")),
             facade_finish=str(data.get("facade_finish", data.get("finishing", "Без отделки"))),
             extra_costs=[ExtraCostItem.from_dict(item) for item in data.get("extra_costs", [])],
+            site=SiteParams.from_dict(data.get("site")),
+            site_elements=[SiteElement.from_dict(item) for item in data.get("site_elements", [])],
+            show_architecture_layer=bool(data.get("show_architecture_layer", True)),
+            show_site_layer=bool(data.get("show_site_layer", True)),
+            show_electric_layer=bool(data.get("show_electric_layer", True)),
+            show_plumbing_layer=bool(data.get("show_plumbing_layer", True)),
+            show_estimate_layer=bool(data.get("show_estimate_layer", True)),
         )
 
         # Для старых стен без параметров подставляем общие настройки проекта.

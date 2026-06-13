@@ -148,7 +148,26 @@ def calculate_estimate(project: Project, materials: dict[str, Any]) -> dict[str,
     second_floor_cost = second_floor_walls_cost + slab_cost
 
     floor_factor = _floor_complexity_factor(project)
-    subtotal = walls_cost + foundation_cost + roof_cost + openings_cost + insulation_cost + facade_cost + stairs_cost + slab_cost
+    site_breakdown = _site_costs(project)
+    site_cost = site_breakdown["site_cost"]
+    septic_cost = site_breakdown["septic_cost"]
+    electric_cost = site_breakdown["electric_cost"]
+    plumbing_cost = site_breakdown["plumbing_cost"]
+
+    subtotal = (
+        walls_cost
+        + foundation_cost
+        + roof_cost
+        + openings_cost
+        + insulation_cost
+        + facade_cost
+        + stairs_cost
+        + slab_cost
+        + site_cost
+        + septic_cost
+        + electric_cost
+        + plumbing_cost
+    )
     complexity_extra = subtotal * (floor_factor - 1)
     extra_costs_total = sum(max(0.0, float(item.amount)) for item in project.extra_costs)
     total = subtotal + complexity_extra + extra_costs_total
@@ -191,6 +210,25 @@ def calculate_estimate(project: Project, materials: dict[str, Any]) -> dict[str,
         "insulation_cost": insulation_cost,
         "facade_cost": facade_cost,
         "finishing_cost": finishing_cost,
+        "site_cost": site_cost,
+        "septic_cost": septic_cost,
+        "electric_cost": electric_cost,
+        "plumbing_cost": plumbing_cost,
+        "estimate_categories": _estimate_categories(
+            walls_cost=walls_cost,
+            foundation_cost=foundation_cost,
+            insulation_cost=insulation_cost,
+            facade_cost=facade_cost,
+            stairs_cost=stairs_cost,
+            slab_cost=slab_cost,
+            roof_cost=roof_cost,
+            openings_cost=openings_cost,
+            site_cost=site_cost,
+            septic_cost=septic_cost,
+            electric_cost=electric_cost,
+            plumbing_cost=plumbing_cost,
+            extra_costs_total=extra_costs_total,
+        ),
         "extra_costs_total": extra_costs_total,
         "floor_complexity_factor": floor_factor,
         "complexity_extra": complexity_extra,
@@ -201,6 +239,58 @@ def calculate_estimate(project: Project, materials: dict[str, Any]) -> dict[str,
 
 def calculate_roof_area(project: Project, materials: dict[str, Any]) -> float:
     return calculate_roof_metrics(project, materials)["roof_area"]
+
+
+def _site_costs(project: Project) -> dict[str, float]:
+    totals = {
+        "site_cost": 0.0,
+        "septic_cost": 0.0,
+        "electric_cost": 0.0,
+        "plumbing_cost": 0.0,
+    }
+    electric_kinds = {"electric_input", "electric_panel", "outlet", "switch", "light", "electric_line"}
+    plumbing_kinds = {"water_input", "water_pipe", "plumbing_point", "sewer_output", "shower", "kitchen_water"}
+    septic_kinds = {"septic"}
+
+    for item in project.site_elements:
+        base = max(0.0, float(item.price)) * max(1.0, float(item.quantity or 1.0))
+        delivery = float(item.parameters.get("delivery", 0) or 0)
+        installation = float(item.parameters.get("installation", 0) or 0)
+        amount = base + delivery + installation
+        if item.kind in septic_kinds:
+            totals["septic_cost"] += amount
+        elif item.kind in electric_kinds:
+            totals["electric_cost"] += amount
+        elif item.kind in plumbing_kinds:
+            totals["plumbing_cost"] += amount
+        else:
+            totals["site_cost"] += amount
+    return totals
+
+
+def _estimate_categories(**values: float) -> list[dict[str, float | str]]:
+    house_cost = (
+        values["walls_cost"]
+        + values["foundation_cost"]
+        + values["insulation_cost"]
+        + values["facade_cost"]
+        + values["stairs_cost"]
+        + values["slab_cost"]
+    )
+    rows = [
+        ("Дом", "компл.", 1, house_cost),
+        ("Крыша", "компл.", 1, values["roof_cost"]),
+        ("Окна и двери", "компл.", 1, values["openings_cost"]),
+        ("Участок", "компл.", 1, values["site_cost"]),
+        ("Септик", "компл.", 1, values["septic_cost"]),
+        ("Электрика", "компл.", 1, values["electric_cost"]),
+        ("Сантехника", "компл.", 1, values["plumbing_cost"]),
+        ("Дополнительные расходы", "компл.", 1, values["extra_costs_total"]),
+    ]
+    return [
+        {"category": name, "unit": unit, "quantity": quantity, "price": amount, "amount": amount}
+        for name, unit, quantity, amount in rows
+    ]
 
 
 def calculate_roof_metrics(project: Project, materials: dict[str, Any]) -> dict[str, float]:
@@ -316,6 +406,10 @@ def estimate_to_text(project: Project, estimate: dict[str, float]) -> str:
             f"Стоимость второго этажа: {format_money(estimate['second_floor_cost'])}",
             f"Стоимость утепления: {format_money(estimate['insulation_cost'])}",
             f"Стоимость фасада: {format_money(estimate['facade_cost'])}",
+            f"Стоимость участка: {format_money(estimate.get('site_cost', 0))}",
+            f"Стоимость септика: {format_money(estimate.get('septic_cost', 0))}",
+            f"Стоимость электрики: {format_money(estimate.get('electric_cost', 0))}",
+            f"Стоимость сантехники: {format_money(estimate.get('plumbing_cost', 0))}",
             f"Поправка этажности: {format_money(estimate['complexity_extra'])}",
             f"Дополнительные расходы: {format_money(estimate.get('extra_costs_total', 0))}",
             *extra_lines,

@@ -22,6 +22,29 @@ def apply_app_style(app: QApplication) -> None:
             background: #f3f5f2;
             color: #172126;
         }
+        QDialog#LightDialog {
+            background: #ffffff;
+            color: #172126;
+        }
+        QDialog#LightDialog QLabel {
+            color: #172126;
+            font-size: 16px;
+            line-height: 1.35;
+        }
+        QDialog#LightDialog QPushButton {
+            min-height: 44px;
+            font-size: 16px;
+            font-weight: 600;
+            background: #f8f9f7;
+            color: #172126;
+            border: 1px solid #cfd9d3;
+            border-radius: 12px;
+            padding: 12px 16px;
+            text-align: left;
+        }
+        QDialog#LightDialog QPushButton:hover {
+            background: #eef3ef;
+        }
         QFrame, QGroupBox {
             background: #ffffff;
             border: 1px solid #d9e0dc;
@@ -202,6 +225,14 @@ def apply_app_style(app: QApplication) -> None:
             font-size: 22px;
             font-weight: bold;
             color: #00725f;
+        }
+        QLabel#WarningLabel {
+            color: #7a3b13;
+            background: #fff4e8;
+            border: 1px solid #f1c49b;
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-weight: 600;
         }
         """
     app.setStyleSheet(

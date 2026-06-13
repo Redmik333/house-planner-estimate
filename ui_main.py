@@ -3,9 +3,9 @@ from __future__ import annotations
 from html import escape
 from typing import Any
 
-from PySide6.QtCore import QSettings, QSize, Qt
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSettings, QSize, Qt
 from PySide6.QtCore import QTimer
-from PySide6.QtGui import QAction, QColor, QTextDocument
+from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF, QTextDocument
 from PySide6.QtPrintSupport import QPrinter
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
 
 from canvas import PlanCanvas, RoofPreviewWidget
 from facade_view import FacadeView
-from models import DoorItem, ExtraCostItem, PIXELS_PER_METER, Point, Project, ROOM_TYPES, RoomItem, Wall, WindowItem
+from models import DoorItem, ExtraCostItem, PIXELS_PER_METER, Point, Project, ROOM_TYPES, RoomItem, SiteElement, Wall, WindowItem
 from pricing import (
     calculate_estimate,
     estimate_to_text,
@@ -56,6 +56,7 @@ from pricing import (
 )
 from storage import export_text, load_project, save_project
 from section_view import SectionView
+from site_canvas import SITE_ELEMENT_PRESETS, SiteCanvas
 
 
 class OpeningTemplateDialog(QDialog):
@@ -182,11 +183,13 @@ class StartDialog(QDialog):
         super().__init__(parent)
         self.action: str | None = None
         self.setWindowTitle("Начало работы")
-        self.setMinimumWidth(420)
+        self.setMinimumSize(620, 420)
         self.setModal(True)
+        self.setObjectName("LightDialog")
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(12)
+        layout.setContentsMargins(28, 26, 28, 26)
+        layout.setSpacing(14)
 
         title = QLabel("С чего начать?")
         title.setObjectName("PanelTitle")
@@ -197,12 +200,12 @@ class StartDialog(QDialog):
         layout.addWidget(hint)
 
         for caption, action in (
-            ("Новый одноэтажный дом", "one_floor"),
-            ("Новый двухэтажный дом", "two_floor"),
+            ("Создать новый дом", "one_floor"),
+            ("Открыть шаблон", "template"),
             ("Открыть проект", "open"),
-            ("Выбрать шаблон", "template"),
         ):
             button = QPushButton(caption)
+            button.setMinimumHeight(52)
             button.clicked.connect(lambda checked=False, value=action: self._finish(value))
             layout.addWidget(button)
 
@@ -220,12 +223,16 @@ class WelcomeDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.action: str | None = None
         self.setWindowTitle("Добро пожаловать")
-        self.setMinimumWidth(520)
+        self.setMinimumSize(700, 450)
+        self.resize(700, 450)
         self.setModal(True)
+        self.setObjectName("LightDialog")
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(14)
+        layout.setContentsMargins(34, 30, 34, 30)
+        layout.setSpacing(16)
 
         title = QLabel("Добро пожаловать в программу планировки дома.")
         title.setObjectName("PanelTitle")
@@ -246,10 +253,108 @@ class WelcomeDialog(QDialog):
         self.hide_check = QCheckBox("Больше не показывать")
         layout.addWidget(self.hide_check)
 
-        start_button = QPushButton("Начать работу")
-        start_button.setMinimumHeight(52)
-        start_button.clicked.connect(self.accept)
-        layout.addWidget(start_button)
+        buttons = [
+            ("Создать новый дом", "new"),
+            ("Открыть шаблон", "template"),
+            ("Открыть демо-дом", "demo"),
+            ("Начать обучение", "tutorial"),
+            ("Открыть проект", "open"),
+        ]
+        for caption, action in buttons:
+            button = QPushButton(caption)
+            button.setMinimumHeight(50)
+            button.clicked.connect(lambda checked=False, value=action: self._finish(value))
+            layout.addWidget(button)
+
+    def _finish(self, action: str) -> None:
+        self.action = action
+        self.accept()
+
+
+class TutorialOverlay(QWidget):
+    """Полупрозрачная маска и белое обучающее облачко со стрелкой к кнопке."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.target: QWidget | None = None
+        self.text = ""
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.hide()
+
+    def show_tip(self, target: QWidget | None, text: str) -> None:
+        self.target = target
+        self.text = text
+        self.setGeometry(self.parentWidget().rect())
+        self.show()
+        self.raise_()
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt API
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.fillRect(self.rect(), QColor(15, 24, 28, 95))
+
+        target_rect = self._target_rect()
+        if target_rect is not None:
+            painter.setPen(QPen(QColor("#f0a24a"), 3))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(target_rect, 10, 10)
+
+        bubble = self._bubble_rect(target_rect)
+        shadow = QPainterPath()
+        shadow.addRoundedRect(bubble.adjusted(0, 4, 0, 4), 14, 14)
+        painter.fillPath(shadow, QColor(0, 0, 0, 45))
+
+        path = QPainterPath()
+        path.addRoundedRect(bubble, 14, 14)
+        painter.fillPath(path, QColor("#ffffff"))
+        painter.setPen(QPen(QColor("#d7e0dc"), 1))
+        painter.drawPath(path)
+
+        if target_rect is not None:
+            arrow = QPolygonF(
+                [
+                    QPointF(bubble.left(), bubble.center().y() - 10),
+                    QPointF(bubble.left() - 18, bubble.center().y()),
+                    QPointF(bubble.left(), bubble.center().y() + 10),
+                ]
+            )
+            if bubble.center().x() < target_rect.center().x():
+                arrow = QPolygonF(
+                    [
+                        QPointF(bubble.right(), bubble.center().y() - 10),
+                        QPointF(bubble.right() + 18, bubble.center().y()),
+                        QPointF(bubble.right(), bubble.center().y() + 10),
+                    ]
+                )
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("#ffffff"))
+            painter.drawPolygon(arrow)
+
+        painter.setPen(QColor("#172126"))
+        painter.setFont(QFont("Segoe UI", 14))
+        painter.drawText(bubble.adjusted(22, 18, -22, -18), Qt.AlignLeft | Qt.TextWordWrap, self.text)
+
+    def _target_rect(self) -> QRectF | None:
+        if self.target is None or not self.target.isVisible():
+            return None
+        top_left = self.target.mapToGlobal(QPoint(0, 0))
+        local = self.mapFromGlobal(top_left)
+        return QRectF(local, self.target.size()).adjusted(-8, -8, 8, 8)
+
+    def _bubble_rect(self, target_rect: QRectF | None) -> QRectF:
+        width = min(430.0, max(320.0, self.width() * 0.30))
+        height = 150.0
+        if target_rect is None:
+            return QRectF((self.width() - width) / 2, 80, width, height)
+        x = target_rect.right() + 34
+        y = max(28.0, min(target_rect.top() - 18, self.height() - height - 28))
+        if x + width > self.width() - 24:
+            x = target_rect.left() - width - 34
+        if x < 24:
+            x = (self.width() - width) / 2
+            y = min(target_rect.bottom() + 26, self.height() - height - 28)
+        return QRectF(x, y, width, height)
 
 
 class MainWindow(QMainWindow):
@@ -266,6 +371,7 @@ class MainWindow(QMainWindow):
         self.canvas = self.canvas1
         self.facade_view = FacadeView(self.project)
         self.section_view = SectionView(self.project)
+        self.site_canvas = SiteCanvas(self.project)
         self.roof_preview: RoofPreviewWidget | None = None
         self.center_tabs: QTabWidget | None = None
         self.explanation_table: QTableWidget | None = None
@@ -285,6 +391,7 @@ class MainWindow(QMainWindow):
 
         self._build_menu()
         self._build_layout()
+        self.tutorial_overlay = TutorialOverlay(self)
         self._connect_signals()
         self._sync_controls_from_project()
         self._refresh_selection_panel("project", -1)
@@ -307,8 +414,15 @@ class MainWindow(QMainWindow):
             canvas.set_stair_template(self._current_stair_template())
         self.facade_view.set_project(project)
         self.section_view.set_project(project)
+        self.site_canvas.set_project(project)
         if self.roof_preview is not None:
             self.roof_preview.set_project(project)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        if hasattr(self, "tutorial_overlay") and self.tutorial_overlay.isVisible():
+            self.tutorial_overlay.setGeometry(self.rect())
+            self.tutorial_overlay.update()
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("Файл")
@@ -327,8 +441,14 @@ class MainWindow(QMainWindow):
             file_menu.addAction(action)
 
         help_menu = self.menuBar().addMenu("Помощь")
+        quick_tutorial_action = QAction("Быстрое обучение", self)
+        quick_tutorial_action.triggered.connect(self._start_tutorial)
+        reset_tips_action = QAction("Сбросить подсказки", self)
+        reset_tips_action.triggered.connect(self._reset_tips)
         demo_action = QAction("Открыть демонстрационный дом", self)
         demo_action.triggered.connect(self._open_demo_project)
+        help_menu.addAction(quick_tutorial_action)
+        help_menu.addAction(reset_tips_action)
         help_menu.addAction(demo_action)
 
     def _build_layout(self) -> None:
@@ -371,8 +491,8 @@ class MainWindow(QMainWindow):
             )
         )
         layout.addWidget(self._menu_button("Конструкции", [("Стена", lambda: self._activate_tool("wall")), ("Крыша", lambda: self._activate_tool("roof")), ("Лестница", lambda: self._activate_tool("stair"))]))
-        layout.addWidget(self._menu_button("Планировки", [("Помещение", lambda: self._activate_tool("room")), ("Вписать проект", self._fit_current_project)]))
-        layout.addWidget(self._menu_button("Смета", [("Открыть смету", lambda: self.right_tabs.setCurrentIndex(7)), ("Экспорт TXT", self._export_txt)]))
+        layout.addWidget(self._menu_button("Планировки", [("Помещение", lambda: self._activate_tool("room")), ("Участок", lambda: self._activate_tool("site")), ("Вписать проект", self._fit_current_project)]))
+        layout.addWidget(self._menu_button("Смета", [("Открыть смету", lambda: self.right_tabs.setCurrentIndex(8)), ("Экспорт TXT", self._export_txt)]))
         layout.addWidget(self._menu_button("Экспорт", [("PDF", self._export_pdf), ("Изображение", self._export_image), ("Коммерческое предложение", self._export_commercial_offer)]))
 
         self.fit_button = QPushButton("Вписать проект в экран")
@@ -415,6 +535,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(facade_tab, "Фасад")
         tabs.addTab(self.section_view, "Разрез")
         tabs.addTab(self._build_explanation_tab(), "Экспликация")
+        self.site_tab_index = tabs.addTab(self.site_canvas, "Участок")
         self._sync_floor_tabs()
         tabs.currentChanged.connect(self._center_tab_changed)
         return tabs
@@ -461,6 +582,7 @@ class MainWindow(QMainWindow):
             ("room", "Помещение"),
             ("stair", "Лестница"),
             ("roof", "Крыша"),
+            ("site", "Участок"),
             ("delete", "Удалить объект"),
         ]
         for tool_id, caption in tools:
@@ -555,6 +677,7 @@ class MainWindow(QMainWindow):
             ("🚪 Двери", self._build_door_panel()),
             ("🏠 Помещения", self._build_rooms_panel()),
             ("🪜 Лестница", self._build_stair_panel()),
+            ("🌿 Участок", self._build_site_panel()),
             ("💰 Смета", self._build_estimate_box()),
         ]
         for title, widget in sections:
@@ -890,6 +1013,92 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         return container
 
+    def _build_site_panel(self) -> QWidget:
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        site_box = QGroupBox("Участок")
+        site_form = QFormLayout(site_box)
+        self._setup_form(site_form)
+        self.site_area_spin = self._plain_spin(1.0, 50.0, 0.5, 1, " сот.")
+        self.site_width_spin = self._meter_spin(5.0, 120.0, 0.5, 1)
+        self.site_length_spin = self._meter_spin(5.0, 200.0, 0.5, 1)
+        self.site_shape_combo = QComboBox()
+        self.site_shape_combo.addItems(["Прямоугольник", "Произвольная"])
+        self.site_front_setback_spin = self._meter_spin(0.0, 30.0, 0.5, 1)
+        self.site_rear_setback_spin = self._meter_spin(0.0, 30.0, 0.5, 1)
+        self.site_left_setback_spin = self._meter_spin(0.0, 30.0, 0.5, 1)
+        self.site_right_setback_spin = self._meter_spin(0.0, 30.0, 0.5, 1)
+        self.site_entry_side_combo = QComboBox()
+        self.site_entry_side_combo.addItems(["Север", "Юг", "Запад", "Восток"])
+        site_form.addRow("Площадь участка", self.site_area_spin)
+        site_form.addRow("Ширина", self.site_width_spin)
+        site_form.addRow("Длина", self.site_length_spin)
+        site_form.addRow("Форма", self.site_shape_combo)
+        site_form.addRow("Отступ спереди", self.site_front_setback_spin)
+        site_form.addRow("Отступ сзади", self.site_rear_setback_spin)
+        site_form.addRow("Отступ слева", self.site_left_setback_spin)
+        site_form.addRow("Отступ справа", self.site_right_setback_spin)
+        site_form.addRow("Сторона въезда", self.site_entry_side_combo)
+
+        modes_box = QGroupBox("Режимы отображения")
+        modes_layout = QVBoxLayout(modes_box)
+        self.show_architecture_layer_check = QCheckBox("Архитектура")
+        self.show_site_layer_check = QCheckBox("Участок")
+        self.show_electric_layer_check = QCheckBox("Электрика")
+        self.show_plumbing_layer_check = QCheckBox("Сантехника")
+        self.show_estimate_layer_check = QCheckBox("Смета")
+        for check in (
+            self.show_architecture_layer_check,
+            self.show_site_layer_check,
+            self.show_electric_layer_check,
+            self.show_plumbing_layer_check,
+            self.show_estimate_layer_check,
+        ):
+            modes_layout.addWidget(check)
+
+        tools_box = QGroupBox("Элементы участка")
+        tools_layout = QVBoxLayout(tools_box)
+        self.site_tool_buttons: dict[str, QPushButton] = {}
+        site_tools = [
+            ("fence", "Добавить забор"),
+            ("gate", "Добавить ворота"),
+            ("wicket", "Добавить калитку"),
+            ("parking", "Добавить парковку"),
+            ("path", "Добавить дорожку"),
+            ("septic", "Добавить септик"),
+            ("well", "Добавить скважину"),
+            ("electric_input", "Добавить электрический ввод"),
+            ("water_input", "Добавить водопровод"),
+            ("landscaping", "Добавить зону озеленения"),
+            ("electric_panel", "Электрощит"),
+            ("outlet", "Розетка"),
+            ("switch", "Выключатель"),
+            ("light", "Светильник"),
+            ("electric_line", "Линия электрики"),
+            ("water_pipe", "Труба"),
+            ("plumbing_point", "Сантехническая точка"),
+            ("sewer_output", "Канализационный вывод"),
+        ]
+        for kind, caption in site_tools:
+            button = QPushButton(caption)
+            button.setMinimumHeight(42)
+            button.clicked.connect(lambda checked=False, value=kind: self._activate_site_tool(value))
+            self.site_tool_buttons[kind] = button
+            tools_layout.addWidget(button)
+
+        self.site_warning_label = QLabel("")
+        self.site_warning_label.setObjectName("WarningLabel")
+        self.site_warning_label.setWordWrap(True)
+
+        layout.addWidget(site_box)
+        layout.addWidget(modes_box)
+        layout.addWidget(tools_box)
+        layout.addWidget(self.site_warning_label)
+        layout.addStretch()
+        return container
+
     def _build_estimate_box(self) -> QWidget:
         container = QWidget()
         layout = QVBoxLayout(container)
@@ -931,6 +1140,17 @@ class MainWindow(QMainWindow):
         extra_buttons.addWidget(self.remove_extra_cost_button)
         extra_layout.addLayout(extra_buttons)
 
+        category_box = QGroupBox("Категории сметы")
+        category_layout = QVBoxLayout(category_box)
+        self.estimate_category_table = QTableWidget(0, 5)
+        self.estimate_category_table.setHorizontalHeaderLabels(["Категория", "Кол-во", "Ед.", "Цена", "Сумма"])
+        self.estimate_category_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        for column in range(1, 5):
+            self.estimate_category_table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        self.estimate_category_table.verticalHeader().setVisible(False)
+        self.estimate_category_table.setAlternatingRowColors(True)
+        category_layout.addWidget(self.estimate_category_table)
+
         box = QGroupBox("Смета")
         self.estimate_details_box = box
         form = QFormLayout(box)
@@ -964,6 +1184,10 @@ class MainWindow(QMainWindow):
             "second_floor_cost": "Второй этаж",
             "insulation_cost": "Утепление",
             "facade_cost": "Фасад",
+            "site_cost": "Участок",
+            "septic_cost": "Септик",
+            "electric_cost": "Электрика",
+            "plumbing_cost": "Сантехника",
             "complexity_extra": "Этажность/сложность",
             "extra_costs_total": "Дополнительные расходы",
             "cost_per_m2": "Цена за м²",
@@ -979,6 +1203,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.estimate_empty_label)
         layout.addWidget(summary_box)
         layout.addWidget(extra_box)
+        layout.addWidget(category_box)
         layout.addWidget(box)
         layout.addStretch()
         return container
@@ -989,6 +1214,8 @@ class MainWindow(QMainWindow):
             canvas.selection_changed.connect(self._refresh_selection_panel)
             canvas.room_place_requested.connect(self._place_room)
             canvas.tutorial_event.connect(self._handle_tutorial_event)
+        self.site_canvas.project_changed.connect(self._on_project_changed)
+        self.site_canvas.warning_requested.connect(self._show_site_warning)
         self.facade_side_combo.currentTextChanged.connect(self.facade_view.set_side)
 
         for signal in (
@@ -1020,6 +1247,23 @@ class MainWindow(QMainWindow):
             self.show_doors_check.toggled,
         ):
             signal.connect(self._apply_project_params)
+        for signal in (
+            self.site_area_spin.valueChanged,
+            self.site_width_spin.valueChanged,
+            self.site_length_spin.valueChanged,
+            self.site_shape_combo.currentTextChanged,
+            self.site_front_setback_spin.valueChanged,
+            self.site_rear_setback_spin.valueChanged,
+            self.site_left_setback_spin.valueChanged,
+            self.site_right_setback_spin.valueChanged,
+            self.site_entry_side_combo.currentTextChanged,
+            self.show_architecture_layer_check.toggled,
+            self.show_site_layer_check.toggled,
+            self.show_electric_layer_check.toggled,
+            self.show_plumbing_layer_check.toggled,
+            self.show_estimate_layer_check.toggled,
+        ):
+            signal.connect(self._apply_site_params)
         self.auto_build_roof_button.clicked.connect(self._auto_build_roof)
         self.open_roof_view_button.clicked.connect(self._open_roof_view)
 
@@ -1081,8 +1325,14 @@ class MainWindow(QMainWindow):
             self.project.show_roof = True
             self.show_roof_check.setChecked(True)
             self.right_tabs.setCurrentIndex(2)
+        elif tool == "site":
+            if self.center_tabs is not None:
+                self.center_tabs.setCurrentIndex(self.site_tab_index)
+            self.right_tabs.setCurrentIndex(7)
+            self.site_canvas.set_tool("site")
         self._set_active_tool(tool)
-        self.canvas.set_tool(tool)
+        if tool != "site":
+            self.canvas.set_tool(tool)
         self.roof_mode_box.setVisible(tool == "roof")
         if tool == "roof":
             self.help_label.setText("Режим крыши: настройте тип, угол, конёк и кровлю справа. Подробные скаты и фронтоны показываются только в этом режиме.")
@@ -1092,6 +1342,8 @@ class MainWindow(QMainWindow):
             self.help_label.setText("Настройте лестницу справа, затем кликните на плане в месте установки.")
         elif tool == "delete":
             self.help_label.setText("Режим удаления: кликните по стене, окну, двери, помещению или лестнице, чтобы удалить объект.")
+        elif tool == "site":
+            self.help_label.setText("Участок: выберите объект справа и кликните на плане участка, чтобы поставить его.")
         else:
             self.help_label.setText("Окна и двери выбираются по шаблону и ставятся кликом по существующей стене.")
         self._refresh_roof_mode_summary()
@@ -1291,6 +1543,10 @@ class MainWindow(QMainWindow):
         self.labels["second_floor_cost"].setText(format_money(self.estimate["second_floor_cost"]))
         self.labels["insulation_cost"].setText(format_money(self.estimate["insulation_cost"]))
         self.labels["facade_cost"].setText(format_money(self.estimate["facade_cost"]))
+        self.labels["site_cost"].setText(format_money(self.estimate["site_cost"]))
+        self.labels["septic_cost"].setText(format_money(self.estimate["septic_cost"]))
+        self.labels["electric_cost"].setText(format_money(self.estimate["electric_cost"]))
+        self.labels["plumbing_cost"].setText(format_money(self.estimate["plumbing_cost"]))
         self.labels["complexity_extra"].setText(format_money(self.estimate["complexity_extra"]))
         self.labels["extra_costs_total"].setText(format_money(self.estimate["extra_costs_total"]))
         self.labels["cost_per_m2"].setText(format_money(self.estimate["cost_per_m2"]))
@@ -1301,6 +1557,8 @@ class MainWindow(QMainWindow):
             self.summary_cost_m2_label.setText(format_money(self.estimate["cost_per_m2"]))
         if hasattr(self, "extra_cost_table"):
             self._refresh_extra_cost_table()
+        if hasattr(self, "estimate_category_table"):
+            self._refresh_estimate_category_table()
         if hasattr(self, "roof_ridge_height_spin") and self.project.auto_roof_ridge_height and self.project.roof_type == "Двускатная":
             self.roof_ridge_height_spin.blockSignals(True)
             self.roof_ridge_height_spin.setValue(self.project.roof_ridge_height)
@@ -1328,6 +1586,7 @@ class MainWindow(QMainWindow):
         self.section_view.update()
         if self.roof_preview is not None:
             self.roof_preview.update()
+        self.site_canvas.update()
 
     def _project_has_walls(self) -> bool:
         return any(floor.walls for floor in self.project.all_floors())
@@ -1431,8 +1690,14 @@ class MainWindow(QMainWindow):
         self._refresh_estimate()
         for canvas in self._all_canvases():
             canvas.update()
+        self.site_canvas.update()
 
     def _center_tab_changed(self, index: int) -> None:
+        if index == getattr(self, "site_tab_index", -1):
+            if "site" in self.tool_buttons:
+                self.tool_buttons["site"].setChecked(True)
+            self.right_tabs.setCurrentIndex(7)
+            return
         if index == getattr(self, "plan2_tab_index", -1):
             self.canvas = self.canvas2
         else:
@@ -1469,6 +1734,64 @@ class MainWindow(QMainWindow):
 
     def _fit_current_project(self) -> None:
         self.canvas.fit_project_to_view()
+
+    def _activate_site_tool(self, kind: str) -> None:
+        if self.center_tabs is not None:
+            self.center_tabs.setCurrentIndex(self.site_tab_index)
+        self.right_tabs.setCurrentIndex(7)
+        self.site_canvas.set_tool(kind)
+        preset = SITE_ELEMENT_PRESETS.get(kind, {})
+        name = preset.get("name", "элемент")
+        if kind == "fence":
+            self.help_label.setText("Забор добавляется по периметру участка. Нажмите на плане участка в любом месте.")
+        else:
+            self.help_label.setText(f"Кликните на плане участка, чтобы поставить: {name}.")
+
+    def _apply_site_params(self) -> None:
+        if self._updating_controls:
+            return
+        site = self.project.site
+        sender = self.sender()
+        site.area_sotka = float(self.site_area_spin.value())
+        if sender == self.site_area_spin:
+            width, length = self._suggest_site_size(site.area_sotka)
+            self.site_width_spin.blockSignals(True)
+            self.site_length_spin.blockSignals(True)
+            self.site_width_spin.setValue(width)
+            self.site_length_spin.setValue(length)
+            self.site_width_spin.blockSignals(False)
+            self.site_length_spin.blockSignals(False)
+        site.width_m = float(self.site_width_spin.value())
+        site.length_m = float(self.site_length_spin.value())
+        site.shape = self.site_shape_combo.currentText()
+        site.front_setback_m = float(self.site_front_setback_spin.value())
+        site.rear_setback_m = float(self.site_rear_setback_spin.value())
+        site.left_setback_m = float(self.site_left_setback_spin.value())
+        site.right_setback_m = float(self.site_right_setback_spin.value())
+        site.entry_side = self.site_entry_side_combo.currentText()
+        self.project.show_architecture_layer = self.show_architecture_layer_check.isChecked()
+        self.project.show_site_layer = self.show_site_layer_check.isChecked()
+        self.project.show_electric_layer = self.show_electric_layer_check.isChecked()
+        self.project.show_plumbing_layer = self.show_plumbing_layer_check.isChecked()
+        self.project.show_estimate_layer = self.show_estimate_layer_check.isChecked()
+        self.site_canvas.update()
+        self._refresh_estimate()
+
+    def _suggest_site_size(self, area_sotka: float) -> tuple[float, float]:
+        if abs(area_sotka - 6.0) <= 0.25:
+            return 20.0, 30.0
+        if abs(area_sotka - 8.0) <= 0.25:
+            return 20.0, 40.0
+        if abs(area_sotka - 10.0) <= 0.25:
+            return 25.0, 40.0
+        area_m2 = max(100.0, area_sotka * 100.0)
+        width = max(10.0, round((area_m2 / 1.5) ** 0.5, 1))
+        length = round(area_m2 / width, 1)
+        return width, length
+
+    def _show_site_warning(self, text: str) -> None:
+        self.site_warning_label.setText(text)
+        self.right_tabs.setCurrentIndex(7)
 
     def _auto_build_roof(self) -> None:
         width_m, depth_m = self.project.footprint_bounds_m()
@@ -1688,6 +2011,28 @@ class MainWindow(QMainWindow):
                 extra.amount = 0.0
         self._refresh_estimate()
 
+    def _refresh_estimate_category_table(self) -> None:
+        rows = self.estimate.get("estimate_categories", [])
+        table = self.estimate_category_table
+        table.blockSignals(True)
+        try:
+            table.setRowCount(len(rows))
+            for row, data in enumerate(rows):
+                values = [
+                    str(data.get("category", "")),
+                    f"{float(data.get('quantity', 0)):.0f}",
+                    str(data.get("unit", "")),
+                    format_money(float(data.get("price", 0))),
+                    format_money(float(data.get("amount", 0))),
+                ]
+                for column, value in enumerate(values):
+                    item = QTableWidgetItem(value)
+                    if column in (1, 3, 4):
+                        item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    table.setItem(row, column, item)
+        finally:
+            table.blockSignals(False)
+
     def _refresh_explanation(self) -> None:
         if self.explanation_table is None:
             return
@@ -1711,11 +2056,26 @@ class MainWindow(QMainWindow):
             return
         if not self.settings.value("welcome_hidden", False, type=bool):
             dialog = WelcomeDialog(self)
-            dialog.exec()
+            accepted = dialog.exec() == QDialog.Accepted
             if dialog.hide_check.isChecked():
                 self.settings.setValue("welcome_hidden", True)
-            self._start_tutorial()
+            if accepted and dialog.action:
+                self._handle_welcome_action(dialog.action)
+                return
         self._show_start_screen()
+
+    def _handle_welcome_action(self, action: str) -> None:
+        if action == "new":
+            self._new_project_with_floor_mode("1 этаж")
+        elif action == "template":
+            self._choose_house_template()
+        elif action == "demo":
+            self._open_demo_project()
+        elif action == "tutorial":
+            self._new_project_with_floor_mode("1 этаж")
+            self._start_tutorial()
+        elif action == "open":
+            self._open_project()
 
     def _start_tutorial(self) -> None:
         self._tutorial_active = True
@@ -1725,6 +2085,7 @@ class MainWindow(QMainWindow):
         self.help_label.setText("Шаг 1: Нарисуйте внешний контур дома.")
         if "wall" in self.tool_buttons:
             self.tool_buttons["wall"].setChecked(True)
+            self._show_tutorial_bubble(self.tool_buttons["wall"], "Шаг 1. Нажмите «Добавить стену» и нарисуйте внешний контур дома.")
 
     def _handle_tutorial_event(self, event_name: str) -> None:
         if not self._tutorial_active:
@@ -1732,18 +2093,35 @@ class MainWindow(QMainWindow):
         if event_name == "wall_added" and self._tutorial_stage == "need_wall":
             self._tutorial_stage = "need_contour"
             self.help_label.setText("Продолжайте рисовать стены. Замкните контур дома.")
+            self._show_tutorial_bubble(self.canvas, "Продолжайте рисовать стены. Когда последняя стена соединится с первой, контур будет замкнут.")
         elif event_name == "contour_closed":
             self._tutorial_stage = "need_openings"
             self.help_label.setText("Дом создан. Теперь добавьте окна и двери.")
             if "door" in self.tool_buttons:
                 self.tool_buttons["door"].setChecked(True)
+                self._show_tutorial_bubble(self.tool_buttons["door"], "Дом создан. Теперь добавьте дверь на существующую стену.")
         elif event_name == "door_added":
             self._tutorial_stage = "need_window"
             self.help_label.setText("Вы можете менять направление открывания двери в настройках справа.")
+            if "window" in self.tool_buttons:
+                self._show_tutorial_bubble(self.tool_buttons["window"], "Теперь добавьте окно. Его размеры и тип остекления можно менять справа.")
         elif event_name == "window_added":
             self._tutorial_stage = "done"
             self._tutorial_active = False
             self.help_label.setText("Вы можете изменять размеры окна и тип остекления в настройках справа.")
+            self._hide_tutorial_bubble()
+
+    def _show_tutorial_bubble(self, target: QWidget | None, text: str) -> None:
+        if hasattr(self, "tutorial_overlay"):
+            self.tutorial_overlay.show_tip(target, text)
+
+    def _hide_tutorial_bubble(self) -> None:
+        if hasattr(self, "tutorial_overlay"):
+            self.tutorial_overlay.hide()
+
+    def _reset_tips(self) -> None:
+        self.settings.setValue("welcome_hidden", False)
+        self._start_tutorial()
 
     def _show_start_screen(self) -> None:
         if self._start_screen_shown or self._project_has_walls():
@@ -1808,6 +2186,30 @@ class MainWindow(QMainWindow):
         self.project.roof_angle = 32.0
         self.project.auto_roof_ridge_height = True
         self.project.update_auto_roof_height()
+        self.project.site.area_sotka = 8.0
+        self.project.site.width_m = 20.0
+        self.project.site.length_m = 40.0
+        self.project.site.front_setback_m = 6.0
+        self.project.site.rear_setback_m = 5.0
+        self.project.site.left_setback_m = 3.0
+        self.project.site.right_setback_m = 3.0
+        self.project.site_elements = [
+            SiteElement("gate", "Ворота", Point(10.0, 39.0), width_m=4.0, length_m=0.4, price=65000),
+            SiteElement("parking", "Парковка", Point(6.0, 33.0), width_m=6.0, length_m=5.0, quantity=30.0, unit="м²", price=1600),
+            SiteElement("well", "Скважина", Point(17.0, 8.0), width_m=1.2, length_m=1.2, price=180000),
+            SiteElement(
+                "septic",
+                "Септик",
+                Point(4.0, 28.0),
+                width_m=2.0,
+                length_m=2.0,
+                price=120000,
+                parameters={"type": "Станция биоочистки", "volume_m3": 3.0, "delivery": 12000, "installation": 35000},
+            ),
+            SiteElement("electric_input", "Электрический ввод", Point(18.0, 36.0), price=35000),
+            SiteElement("water_input", "Ввод воды", Point(16.0, 9.5), price=18000),
+            SiteElement("path", "Дорожка", Point(10.0, 31.0), width_m=1.2, length_m=10.0, quantity=12.0, unit="м²", price=1400),
+        ]
         self.project._sync_legacy_lists()
         self.current_project_path = None
         self._sync_controls_from_project()
@@ -2064,6 +2466,21 @@ class MainWindow(QMainWindow):
             self.show_rooms_check.setChecked(self.project.show_rooms)
             self.show_windows_check.setChecked(self.project.show_windows)
             self.show_doors_check.setChecked(self.project.show_doors)
+            site = self.project.site
+            self.site_area_spin.setValue(site.area_sotka)
+            self.site_width_spin.setValue(site.width_m)
+            self.site_length_spin.setValue(site.length_m)
+            self.site_shape_combo.setCurrentText(site.shape)
+            self.site_front_setback_spin.setValue(site.front_setback_m)
+            self.site_rear_setback_spin.setValue(site.rear_setback_m)
+            self.site_left_setback_spin.setValue(site.left_setback_m)
+            self.site_right_setback_spin.setValue(site.right_setback_m)
+            self.site_entry_side_combo.setCurrentText(site.entry_side)
+            self.show_architecture_layer_check.setChecked(self.project.show_architecture_layer)
+            self.show_site_layer_check.setChecked(self.project.show_site_layer)
+            self.show_electric_layer_check.setChecked(self.project.show_electric_layer)
+            self.show_plumbing_layer_check.setChecked(self.project.show_plumbing_layer)
+            self.show_estimate_layer_check.setChecked(self.project.show_estimate_layer)
             auto_ridge_active = self.project.auto_roof_ridge_height and self.project.roof_type == "Двускатная"
             self.auto_roof_height_check.setEnabled(self.project.roof_type == "Двускатная")
             self.roof_ridge_height_spin.setEnabled(not auto_ridge_active)
