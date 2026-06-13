@@ -275,6 +275,7 @@ class MainWindow(QMainWindow):
 
         actions = [
             ("Новый проект", self._new_project),
+            ("Новый из шаблона...", self._choose_house_template),
             ("Открыть JSON...", self._open_project),
             ("Сохранить JSON...", self._save_project),
             ("Экспорт сметы TXT...", self._export_txt),
@@ -317,6 +318,7 @@ class MainWindow(QMainWindow):
                 "Проект",
                 [
                     ("Новый", self._new_project),
+                    ("Новый из шаблона", self._choose_house_template),
                     ("Открыть", self._open_project),
                     ("Сохранить", self._save_project),
                     ("Сохранить как", self._save_project_as),
@@ -551,6 +553,8 @@ class MainWindow(QMainWindow):
         form.addRow("Высота 2 этажа", self.floor_2_height_spin)
         form.addRow("Высота цоколя", self.plinth_height_spin)
         form.addRow("Высота перекрытия", self.slab_height_spin)
+        self.floor_2_height_label = form.labelForField(self.floor_2_height_spin)
+        self.slab_height_label = form.labelForField(self.slab_height_spin)
 
         self.height_spin = self.floor_1_height_spin
         self.project_wall_material_combo = self._wall_combo()
@@ -1281,10 +1285,22 @@ class MainWindow(QMainWindow):
             return
         show_second = self.project.floor_mode == "2 этажа"
         self.center_tabs.setTabVisible(self.plan2_tab_index, show_second)
-        self.copy_second_floor_button.setVisible(True)
+        self.copy_second_floor_button.setVisible(show_second)
+        self._sync_floor_controls_visibility()
         if not show_second and self.center_tabs.currentIndex() == self.plan2_tab_index:
             self.center_tabs.setCurrentIndex(self.plan1_tab_index)
             self.canvas = self.canvas1
+
+    def _sync_floor_controls_visibility(self) -> None:
+        show_second = self.project.floor_mode == "2 этажа"
+        for widget in (
+            getattr(self, "floor_2_height_label", None),
+            getattr(self, "floor_2_height_spin", None),
+            getattr(self, "slab_height_label", None),
+            getattr(self, "slab_height_spin", None),
+        ):
+            if widget is not None:
+                widget.setVisible(show_second)
 
     def _delete_selected(self) -> None:
         self.canvas.delete_selected_element()
@@ -1511,12 +1527,7 @@ class MainWindow(QMainWindow):
         floor = project.get_floor(1)
         w = width_m * PIXELS_PER_METER
         d = depth_m * PIXELS_PER_METER
-        floor.walls = [
-            Wall(Point(0, 0), Point(w, 0), material=project.wall_material),
-            Wall(Point(w, 0), Point(w, d), material=project.wall_material),
-            Wall(Point(w, d), Point(0, d), material=project.wall_material),
-            Wall(Point(0, d), Point(0, 0), material=project.wall_material),
-        ]
+        floor.walls = self._template_walls(width_m, depth_m, project.wall_material, project.floor_1_height)
         project.update_auto_roof_height()
         floor.doors = [DoorItem(wall_index=2, position=0.5, template_name="Входная 0.9 x 2.1 м")]
         floor.windows = [
@@ -1530,6 +1541,13 @@ class MainWindow(QMainWindow):
         if floor_mode == "2 этажа":
             project.create_second_floor_from_first()
             second = project.get_floor(2)
+            second.walls = self._template_walls(width_m, depth_m, project.wall_material, project.floor_2_height)
+            second.windows = [
+                WindowItem(wall_index=0, position=0.30, template_name="Стандартное окно 1.5 x 1.4 м"),
+                WindowItem(wall_index=0, position=0.70, template_name="Стандартное окно 1.5 x 1.4 м"),
+                WindowItem(wall_index=3, position=0.45, template_name="Стандартное окно 1.5 x 1.4 м"),
+            ]
+            second.doors = [DoorItem(wall_index=4, position=0.52, width=0.8, height=2.0, template_name="Межкомнатная 0.8 x 2.0 м")]
             second.rooms = self._template_rooms(width_m, depth_m, 2)
 
         project._sync_legacy_lists()
@@ -1543,16 +1561,44 @@ class MainWindow(QMainWindow):
         self._refresh_selection_panel("project", -1)
         QTimer.singleShot(0, self._fit_current_project)
 
+    def _template_walls(self, width_m: float, depth_m: float, material: str, height: float) -> list[Wall]:
+        w = width_m * PIXELS_PER_METER
+        d = depth_m * PIXELS_PER_METER
+        split_x = w * 0.58
+        split_y = d * 0.54
+        return [
+            Wall(Point(0, 0), Point(w, 0), height=height, material=material, is_load_bearing=True),
+            Wall(Point(w, 0), Point(w, d), height=height, material=material, is_load_bearing=True),
+            Wall(Point(w, d), Point(0, d), height=height, material=material, is_load_bearing=True),
+            Wall(Point(0, d), Point(0, 0), height=height, material=material, is_load_bearing=True),
+            Wall(Point(split_x, 0), Point(split_x, d), height=height, thickness=0.15, material=material, is_load_bearing=False),
+            Wall(Point(0, split_y), Point(w, split_y), height=height, thickness=0.15, material=material, is_load_bearing=False),
+        ]
+
     def _template_rooms(self, width_m: float, depth_m: float, floor_level: int) -> list[RoomItem]:
         area = width_m * depth_m
         if floor_level == 2:
-            plan = [("Спальня", 0.24), ("Детская", 0.22), ("Кабинет", 0.16), ("Санузел", 0.08), ("Коридор", 0.12)]
+            plan = ["Спальня", "Детская", "Кабинет", "Санузел"]
         else:
-            plan = [("Гостиная", 0.30), ("Кухня", 0.18), ("Спальня", 0.20), ("Санузел", 0.07), ("Прихожая", 0.10)]
-        centers = [(0.30, 0.32), (0.72, 0.32), (0.30, 0.72), (0.72, 0.70), (0.52, 0.52)]
+            plan = ["Гостиная", "Кухня", "Спальня", "Санузел"]
+        split_x = 0.58
+        split_y = 0.54
+        centers = [
+            (split_x / 2, split_y / 2),
+            ((1 + split_x) / 2, split_y / 2),
+            (split_x / 2, (1 + split_y) / 2),
+            ((1 + split_x) / 2, (1 + split_y) / 2),
+        ]
         rooms: list[RoomItem] = []
-        for (room_name, factor), (cx, cy) in zip(plan, centers):
-            room_area = area * factor
+        for room_name, (cx, cy) in zip(plan, centers):
+            if cx < split_x and cy < split_y:
+                room_area = area * split_x * split_y
+            elif cx >= split_x and cy < split_y:
+                room_area = area * (1 - split_x) * split_y
+            elif cx < split_x and cy >= split_y:
+                room_area = area * split_x * (1 - split_y)
+            else:
+                room_area = area * (1 - split_x) * (1 - split_y)
             side = room_area ** 0.5
             rooms.append(
                 RoomItem(
