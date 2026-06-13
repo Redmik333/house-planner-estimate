@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QApplication,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -43,7 +44,7 @@ from PySide6.QtWidgets import (
 
 from canvas import PlanCanvas, RoofPreviewWidget
 from facade_view import FacadeView
-from models import PIXELS_PER_METER, Point, Project, ROOM_TYPES, RoomItem
+from models import DoorItem, PIXELS_PER_METER, Point, Project, ROOM_TYPES, RoomItem, Wall, WindowItem
 from pricing import (
     calculate_estimate,
     estimate_to_text,
@@ -174,6 +175,46 @@ class OpeningTemplateDialog(QDialog):
         return spin
 
 
+class StartDialog(QDialog):
+    """Стартовый экран для быстрого начала работы без поиска нужной кнопки."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.action: str | None = None
+        self.setWindowTitle("Начало работы")
+        self.setMinimumWidth(420)
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        title = QLabel("С чего начать?")
+        title.setObjectName("PanelTitle")
+        layout.addWidget(title)
+
+        hint = QLabel("Создайте новый дом, откройте сохранённый проект или выберите простой шаблон.")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        for caption, action in (
+            ("Новый одноэтажный дом", "one_floor"),
+            ("Новый двухэтажный дом", "two_floor"),
+            ("Открыть проект", "open"),
+            ("Выбрать шаблон", "template"),
+        ):
+            button = QPushButton(caption)
+            button.clicked.connect(lambda checked=False, value=action: self._finish(value))
+            layout.addWidget(button)
+
+        close_button = QPushButton("Продолжить с пустого проекта")
+        close_button.clicked.connect(self.reject)
+        layout.addWidget(close_button)
+
+    def _finish(self, action: str) -> None:
+        self.action = action
+        self.accept()
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -194,6 +235,7 @@ class MainWindow(QMainWindow):
         self.current_project_path: str | None = None
         self.estimate: dict[str, float] = {}
         self._updating_controls = False
+        self._start_screen_shown = False
         self.tool_buttons: dict[str, QPushButton] = {}
 
         for canvas in self._all_canvases():
@@ -208,6 +250,7 @@ class MainWindow(QMainWindow):
         self._refresh_selection_panel("project", -1)
         self._refresh_estimate()
         QTimer.singleShot(0, self._fit_current_project)
+        QTimer.singleShot(150, self._show_start_screen)
 
     def _all_canvases(self) -> tuple[PlanCanvas, PlanCanvas]:
         return self.canvas1, self.canvas2
@@ -756,7 +799,17 @@ class MainWindow(QMainWindow):
         return container
 
     def _build_estimate_box(self) -> QWidget:
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.estimate_empty_label = QLabel("Проект не создан. Начните с добавления стен или выберите шаблон.")
+        self.estimate_empty_label.setWordWrap(True)
+        self.estimate_empty_label.setAlignment(Qt.AlignCenter)
+        self.estimate_empty_label.setMinimumHeight(140)
+
         box = QGroupBox("Смета")
+        self.estimate_details_box = box
         form = QFormLayout(box)
         self._setup_form(form)
         self.labels: dict[str, QLabel] = {}
@@ -798,7 +851,10 @@ class MainWindow(QMainWindow):
                 label.setObjectName("TotalLabel")
             self.labels[key] = label
             form.addRow(caption, label)
-        return box
+        layout.addWidget(self.estimate_empty_label)
+        layout.addWidget(box)
+        layout.addStretch()
+        return container
 
     def _connect_signals(self) -> None:
         for canvas in self._all_canvases():
@@ -1068,6 +1124,11 @@ class MainWindow(QMainWindow):
     def _refresh_estimate(self) -> None:
         self._recalculate_rooms()
         self.estimate = calculate_estimate(self.project, self.materials)
+        has_walls = self._project_has_walls()
+        if hasattr(self, "estimate_empty_label"):
+            self.estimate_empty_label.setVisible(not has_walls)
+        if hasattr(self, "estimate_details_box"):
+            self.estimate_details_box.setVisible(has_walls)
         self.labels["floor_1_area"].setText(f"{self.estimate['floor_1_area']:.1f} м²")
         self.labels["floor_2_area"].setText(f"{self.estimate['floor_2_area']:.1f} м²")
         self.labels["house_area"].setText(f"{self.estimate['house_area']:.1f} м²")
@@ -1126,6 +1187,9 @@ class MainWindow(QMainWindow):
         self.section_view.update()
         if self.roof_preview is not None:
             self.roof_preview.update()
+
+    def _project_has_walls(self) -> bool:
+        return any(floor.walls for floor in self.project.all_floors())
 
     def _refresh_roof_mode_summary(self) -> None:
         if not hasattr(self, "roof_mode_labels") or not self.estimate:
@@ -1386,8 +1450,31 @@ class MainWindow(QMainWindow):
         if hasattr(self, "explanation_total_label"):
             self.explanation_total_label.setText(f"Итого площадь: {total:.1f} м²")
 
-    def _new_project(self) -> None:
-        self._set_project_for_views(Project())
+    def _show_start_screen(self) -> None:
+        if self._start_screen_shown or self._project_has_walls():
+            return
+        app = QApplication.instance()
+        if app is not None and app.platformName().lower() == "offscreen":
+            return
+        self._start_screen_shown = True
+        dialog = StartDialog(self)
+        if dialog.exec() != QDialog.Accepted or not dialog.action:
+            return
+        if dialog.action == "one_floor":
+            self._new_project_with_floor_mode("1 этаж")
+        elif dialog.action == "two_floor":
+            self._new_project_with_floor_mode("2 этажа")
+        elif dialog.action == "open":
+            self._open_project()
+        elif dialog.action == "template":
+            self._choose_house_template()
+
+    def _new_project_with_floor_mode(self, floor_mode: str) -> None:
+        project = Project()
+        project.floor_mode = floor_mode
+        project.floors = 2 if floor_mode == "2 этажа" else 1
+        project.ensure_floor_count(project.floors)
+        self._set_project_for_views(project)
         self.current_project_path = None
         self.canvas = self.canvas1
         if self.center_tabs is not None:
@@ -1396,6 +1483,90 @@ class MainWindow(QMainWindow):
         self._sync_floor_tabs()
         self._refresh_selection_panel("project", -1)
         QTimer.singleShot(0, self._fit_current_project)
+
+    def _choose_house_template(self) -> None:
+        templates = ["Дом 70 м²", "Дом 90 м²", "Дом 110 м²", "Дом 140 м²"]
+        name, ok = QInputDialog.getItem(self, "Шаблон дома", "Выберите простой шаблон", templates, 0, False)
+        if not ok or not name:
+            return
+        self._apply_house_template(name)
+
+    def _apply_house_template(self, name: str) -> None:
+        sizes = {
+            "Дом 70 м²": (7.0, 10.0, "1 этаж"),
+            "Дом 90 м²": (9.0, 10.0, "1 этаж"),
+            "Дом 110 м²": (10.0, 11.0, "1 этаж"),
+            "Дом 140 м²": (10.0, 7.0, "2 этажа"),
+        }
+        width_m, depth_m, floor_mode = sizes.get(name, sizes["Дом 70 м²"])
+        project = Project()
+        project.floor_mode = floor_mode
+        project.floors = 2 if floor_mode == "2 этажа" else 1
+        project.ensure_floor_count(project.floors)
+        project.show_roof = True
+        project.roof_type = "Двускатная"
+        project.roof_ridge_direction = "по X" if width_m >= depth_m else "по Y"
+        project.update_auto_roof_height()
+
+        floor = project.get_floor(1)
+        w = width_m * PIXELS_PER_METER
+        d = depth_m * PIXELS_PER_METER
+        floor.walls = [
+            Wall(Point(0, 0), Point(w, 0), material=project.wall_material),
+            Wall(Point(w, 0), Point(w, d), material=project.wall_material),
+            Wall(Point(w, d), Point(0, d), material=project.wall_material),
+            Wall(Point(0, d), Point(0, 0), material=project.wall_material),
+        ]
+        project.update_auto_roof_height()
+        floor.doors = [DoorItem(wall_index=2, position=0.5, template_name="Входная 0.9 x 2.1 м")]
+        floor.windows = [
+            WindowItem(wall_index=0, position=0.25, template_name="Стандартное окно 1.5 x 1.4 м"),
+            WindowItem(wall_index=0, position=0.72, template_name="Стандартное окно 1.5 x 1.4 м"),
+            WindowItem(wall_index=1, position=0.5, template_name="Большое окно 2.0 x 1.5 м"),
+            WindowItem(wall_index=3, position=0.45, template_name="Стандартное окно 1.5 x 1.4 м"),
+        ]
+        floor.rooms = self._template_rooms(width_m, depth_m, 1)
+
+        if floor_mode == "2 этажа":
+            project.create_second_floor_from_first()
+            second = project.get_floor(2)
+            second.rooms = self._template_rooms(width_m, depth_m, 2)
+
+        project._sync_legacy_lists()
+        self._set_project_for_views(project)
+        self.current_project_path = None
+        self.canvas = self.canvas1
+        if self.center_tabs is not None:
+            self.center_tabs.setCurrentIndex(self.plan1_tab_index)
+        self._sync_controls_from_project()
+        self._sync_floor_tabs()
+        self._refresh_selection_panel("project", -1)
+        QTimer.singleShot(0, self._fit_current_project)
+
+    def _template_rooms(self, width_m: float, depth_m: float, floor_level: int) -> list[RoomItem]:
+        area = width_m * depth_m
+        if floor_level == 2:
+            plan = [("Спальня", 0.24), ("Детская", 0.22), ("Кабинет", 0.16), ("Санузел", 0.08), ("Коридор", 0.12)]
+        else:
+            plan = [("Гостиная", 0.30), ("Кухня", 0.18), ("Спальня", 0.20), ("Санузел", 0.07), ("Прихожая", 0.10)]
+        centers = [(0.30, 0.32), (0.72, 0.32), (0.30, 0.72), (0.72, 0.70), (0.52, 0.52)]
+        rooms: list[RoomItem] = []
+        for (room_name, factor), (cx, cy) in zip(plan, centers):
+            room_area = area * factor
+            side = room_area ** 0.5
+            rooms.append(
+                RoomItem(
+                    name=room_name,
+                    floor=floor_level,
+                    center=Point(width_m * PIXELS_PER_METER * cx, depth_m * PIXELS_PER_METER * cy),
+                    area=room_area,
+                    perimeter=side * 4,
+                )
+            )
+        return rooms
+
+    def _new_project(self) -> None:
+        self._new_project_with_floor_mode("1 этаж")
 
     def _open_project(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Открыть проект", "", "JSON (*.json)")
