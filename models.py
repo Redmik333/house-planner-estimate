@@ -233,6 +233,24 @@ class StairItem:
 
 
 @dataclass
+class ExtraCostItem:
+    """Пользовательская строка сметы: доставка, работа, техника и т.п."""
+
+    name: str
+    amount: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "amount": self.amount}
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "ExtraCostItem":
+        return ExtraCostItem(
+            name=str(data.get("name", "Дополнительный расход")),
+            amount=float(data.get("amount", 0.0)),
+        )
+
+
+@dataclass
 class FloorPlan:
     level: int
     name: str
@@ -302,6 +320,7 @@ class Project:
     finishing: str = "Без отделки"
     insulation_type: str = "Без утепления"
     facade_finish: str = "Без отделки"
+    extra_costs: list[ExtraCostItem] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.ensure_floor_count(max(1, self.floors))
@@ -573,6 +592,7 @@ class Project:
             "finishing": self.finishing,
             "insulation_type": self.insulation_type,
             "facade_finish": self.facade_finish,
+            "extra_costs": [item.to_dict() for item in self.extra_costs],
         }
 
     @staticmethod
@@ -642,6 +662,7 @@ class Project:
             finishing=str(data.get("finishing", "Без отделки")),
             insulation_type=str(data.get("insulation_type", "Без утепления")),
             facade_finish=str(data.get("facade_finish", data.get("finishing", "Без отделки"))),
+            extra_costs=[ExtraCostItem.from_dict(item) for item in data.get("extra_costs", [])],
         )
 
         # Для старых стен без параметров подставляем общие настройки проекта.

@@ -150,7 +150,9 @@ def calculate_estimate(project: Project, materials: dict[str, Any]) -> dict[str,
     floor_factor = _floor_complexity_factor(project)
     subtotal = walls_cost + foundation_cost + roof_cost + openings_cost + insulation_cost + facade_cost + stairs_cost + slab_cost
     complexity_extra = subtotal * (floor_factor - 1)
-    total = subtotal + complexity_extra
+    extra_costs_total = sum(max(0.0, float(item.amount)) for item in project.extra_costs)
+    total = subtotal + complexity_extra + extra_costs_total
+    cost_per_m2 = total / house_area if house_area > 0 else 0.0
 
     return {
         "house_area": house_area,
@@ -189,8 +191,10 @@ def calculate_estimate(project: Project, materials: dict[str, Any]) -> dict[str,
         "insulation_cost": insulation_cost,
         "facade_cost": facade_cost,
         "finishing_cost": finishing_cost,
+        "extra_costs_total": extra_costs_total,
         "floor_complexity_factor": floor_factor,
         "complexity_extra": complexity_extra,
+        "cost_per_m2": cost_per_m2,
         "total": total,
     }
 
@@ -258,6 +262,11 @@ def format_money(value: float) -> str:
 
 
 def estimate_to_text(project: Project, estimate: dict[str, float]) -> str:
+    extra_lines = []
+    if project.extra_costs:
+        extra_lines = ["", "Дополнительные расходы:"]
+        for item in project.extra_costs:
+            extra_lines.append(f"- {item.name}: {format_money(item.amount)}")
     return "\n".join(
         [
             "Примерная смета дома",
@@ -308,7 +317,10 @@ def estimate_to_text(project: Project, estimate: dict[str, float]) -> str:
             f"Стоимость утепления: {format_money(estimate['insulation_cost'])}",
             f"Стоимость фасада: {format_money(estimate['facade_cost'])}",
             f"Поправка этажности: {format_money(estimate['complexity_extra'])}",
+            f"Дополнительные расходы: {format_money(estimate.get('extra_costs_total', 0))}",
+            *extra_lines,
             "",
+            f"Цена за м²: {format_money(estimate.get('cost_per_m2', 0))}",
             f"Итого: {format_money(estimate['total'])}",
             "",
             "Расчёт является приблизительным и подходит для ранней оценки проекта.",

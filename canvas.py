@@ -4,7 +4,7 @@ from math import atan2, cos, hypot, sin
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QMenu, QWidget
 
 from models import DoorItem, PIXELS_PER_METER, Point, Project, RoomItem, StairItem, Wall, WindowItem
 
@@ -13,6 +13,7 @@ class PlanCanvas(QWidget):
     project_changed = Signal()
     selection_changed = Signal(str, int)
     room_place_requested = Signal(float, float, int)
+    tutorial_event = Signal(str)
 
     def __init__(self, project: Project, floor_level: int = 1) -> None:
         super().__init__()
@@ -69,6 +70,41 @@ class PlanCanvas(QWidget):
             self.project.show_roof = True
             self._select("roof", -1)
             self.project_changed.emit()
+        self.update()
+
+    def copy_selected_element(self) -> None:
+        floor = self.current_floor()
+        if self.selected_kind == "wall" and self.selected_index >= 0:
+            item = Wall.from_dict(floor.walls[self.selected_index].to_dict())
+            item.move(self.grid_size, self.grid_size)
+            floor.walls.append(item)
+            self._select("wall", len(floor.walls) - 1)
+        elif self.selected_kind == "door" and self.selected_index >= 0:
+            item = DoorItem.from_dict(floor.doors[self.selected_index].to_dict())
+            item.position = min(0.92, item.position + 0.08)
+            floor.doors.append(item)
+            self._select("door", len(floor.doors) - 1)
+        elif self.selected_kind == "window" and self.selected_index >= 0:
+            item = WindowItem.from_dict(floor.windows[self.selected_index].to_dict())
+            item.position = min(0.92, item.position + 0.08)
+            floor.windows.append(item)
+            self._select("window", len(floor.windows) - 1)
+        elif self.selected_kind == "room" and self.selected_index >= 0:
+            item = RoomItem.from_dict(floor.rooms[self.selected_index].to_dict())
+            item.center.x += self.grid_size
+            item.center.y += self.grid_size
+            floor.rooms.append(item)
+            self._select("room", len(floor.rooms) - 1)
+        elif self.selected_kind == "stair" and self.selected_index >= 0:
+            item = StairItem.from_dict(floor.stairs[self.selected_index].to_dict())
+            item.position.x += self.grid_size
+            item.position.y += self.grid_size
+            floor.stairs.append(item)
+            self._select("stair", len(floor.stairs) - 1)
+        else:
+            return
+        self.project._sync_legacy_lists()
+        self.project_changed.emit()
         self.update()
 
     def set_door_template(self, template: dict[str, object]) -> None:
@@ -188,6 +224,7 @@ class PlanCanvas(QWidget):
                 self.project._sync_legacy_lists()
                 self._select("door", len(floor.doors) - 1)
                 self.project_changed.emit()
+                self.tutorial_event.emit("door_added")
                 self.update()
         elif self.tool == "window":
             index, ratio = self._wall_at(pos)
@@ -196,6 +233,7 @@ class PlanCanvas(QWidget):
                 self.project._sync_legacy_lists()
                 self._select("window", len(floor.windows) - 1)
                 self.project_changed.emit()
+                self.tutorial_event.emit("window_added")
                 self.update()
         elif self.tool == "stair":
             floor.stairs.append(self._stair_from_template(pos))
@@ -209,6 +247,10 @@ class PlanCanvas(QWidget):
             self._select("roof", -1)
             self.project_changed.emit()
             self.update()
+        elif self.tool == "delete":
+            kind, index = self._element_at(pos)
+            self._select(kind, index)
+            self.delete_selected_element()
         else:
             kind, index = self._element_at(pos)
             self._select(kind, index)
@@ -263,6 +305,9 @@ class PlanCanvas(QWidget):
                 self.project._sync_legacy_lists()
                 self._select("wall", len(self.current_floor().walls) - 1)
                 self.project_changed.emit()
+                self.tutorial_event.emit("wall_added")
+                if self._has_closed_wall_contour():
+                    self.tutorial_event.emit("contour_closed")
             self._draft_start = None
             self._draft_end = None
             self.update()
@@ -283,6 +328,25 @@ class PlanCanvas(QWidget):
     def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt API
         if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
             self.delete_selected_element()
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N802 - Qt API
+        pos = self._screen_to_world(QPointF(event.pos()))
+        kind, index = self._element_at(pos)
+        self._select(kind, index)
+        if kind == "project":
+            return
+        menu = QMenu(self)
+        delete_action = menu.addAction("Удалить")
+        copy_action = menu.addAction("Копировать")
+        properties_action = menu.addAction("Свойства")
+        action = menu.exec(event.globalPos())
+        if action == delete_action:
+            self.delete_selected_element()
+        elif action == copy_action:
+            self.copy_selected_element()
+        elif action == properties_action:
+            self.selection_changed.emit(kind, index)
+            self.update()
 
     def _select(self, kind: str, index: int) -> None:
         self.selected_kind = kind
@@ -692,6 +756,18 @@ class PlanCanvas(QWidget):
         painter.setFont(QFont("Arial", 10))
         text = "Сетка: 1 м = 40 px. Стены привязаны к шагу 0,5 м."
         painter.drawText(QRectF(12, self.height() - 32, self.width() - 24, 24), Qt.AlignLeft, text)
+        if not self.current_floor().walls:
+            painter.setPen(QColor("#52645d"))
+            painter.setFont(QFont("Arial", 16, QFont.Bold))
+            painter.drawText(
+                QRectF(40, self.height() / 2 - 60, self.width() - 80, 120),
+                Qt.AlignCenter | Qt.TextWordWrap,
+                "Начните с кнопки «Добавить стену»\nили откройте готовый шаблон.",
+            )
+        elif self.tool == "delete":
+            painter.setPen(QColor("#9a4f1c"))
+            painter.setFont(QFont("Arial", 12, QFont.Bold))
+            painter.drawText(QRectF(12, 12, self.width() - 24, 28), Qt.AlignLeft, "Кликните по объекту для удаления.")
 
     def _wall_visible_spans(self, wall_index: int) -> list[tuple[float, float]]:
         floor = self.current_floor()
@@ -834,6 +910,18 @@ class PlanCanvas(QWidget):
     @staticmethod
     def _distance(a: QPointF, b: QPointF) -> float:
         return hypot(a.x() - b.x(), a.y() - b.y())
+
+    def _has_closed_wall_contour(self) -> bool:
+        """Проверяем простое замыкание наружного контура по совпадающим концам стен."""
+        walls = self.current_floor().walls
+        if len(walls) < 3:
+            return False
+        counts: dict[tuple[int, int], int] = {}
+        for wall in walls:
+            for point in (wall.start, wall.end):
+                key = (round(point.x / self.grid_size), round(point.y / self.grid_size))
+                counts[key] = counts.get(key, 0) + 1
+        return bool(counts) and all(value >= 2 for value in counts.values())
 
     def _screen_to_world(self, pos: QPointF) -> QPointF:
         scale = self.view_scale or 1.0
